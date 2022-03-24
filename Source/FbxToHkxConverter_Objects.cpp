@@ -2,12 +2,14 @@
  *
  * Confidential Information of Telekinesys Research Limited (t/a Havok). Not for disclosure or distribution without Havok's
  * prior written consent. This software contains code, techniques and know-how which is confidential and proprietary to Havok.
- * Product and Trade Secret source code contains trade secrets of Havok. Havok Software (C) Copyright 1999-2013 Telekinesys Research Limited t/a Havok. All Rights Reserved. Use of this software is subject to the terms of an end user license agreement.
+ * Product and Trade Secret source code contains trade secrets of Havok. Havok Software (C) Copyright 1999-2014 Telekinesys Research Limited t/a Havok. All Rights Reserved. Use of this software is subject to the terms of an end user license agreement.
  *
  */
 
 #include "FbxToHkxConverter.h"
+#include <Common/SceneData/Scene/hkxSceneUtils.h>
 #include <Common/SceneData/Skin/hkxSkinUtils.h>
+#include <Common/SceneData/Mesh/hkxMeshSectionUtil.h>
 
 template <class T>
 void convertPropertyToVector4(const FbxPropertyT<T> &property, hkVector4 &vec, float z = 0.0f)
@@ -22,9 +24,9 @@ template <typename T>
 unsigned elementsToARGB(const T r, const T g, const T b, const T a) 
 {
 	return (static_cast<unsigned char>(static_cast<float>(a) * 255.0f) << 24) |
-		   (static_cast<unsigned char>(static_cast<float>(r) * 255.0f) << 16) |
-		   (static_cast<unsigned char>(static_cast<float>(g) * 255.0f) << 8) |
-		   (static_cast<unsigned char>(static_cast<float>(b) * 255.0f));
+			 (static_cast<unsigned char>(static_cast<float>(r) * 255.0f) << 16) |
+			 (static_cast<unsigned char>(static_cast<float>(g) * 255.0f) << 8) |
+			 (static_cast<unsigned char>(static_cast<float>(b) * 255.0f));
 }
 
 FbxAMatrix FbxToHkxConverter::convertMatrix(const FbxMatrix& mat)
@@ -195,15 +197,12 @@ static hkxMaterial* createDefaultMaterial(const char* name)
 void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node)
 {
 	FbxMesh* originalMesh = meshNode->GetMesh();
-	FbxMesh* triMesh;
+	FbxMesh* triMesh = NULL;
 
 	if (!originalMesh->IsTriangleMesh())
 	{
 		 FbxGeometryConverter lGeometryConverter(m_options.m_fbxSdkManager);
-		 bool status;
-		 triMesh = lGeometryConverter.TriangulateMeshAdvance(originalMesh,status);
-
-		 HK_ASSERT(0,status);
+		 triMesh = static_cast<FbxMesh*>( lGeometryConverter.Triangulate(meshNode->GetNodeAttribute(), false) );
 	}
 	else
 	{
@@ -213,24 +212,17 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	hkxMesh* newMesh = HK_NULL;
 	hkxSkinBinding* newSkin = HK_NULL;
 
+
+	// Get materials
+	hkArray<FbxSurfaceMaterial*> matIds;
+	getMaterialsInMesh(triMesh, matIds);
+
+	// Each matId maps to a mesh section.
 	hkArray<hkxMeshSection*> exportedSections;
+	exportedSections.reserve( matIds.getSize() );
 
-	// Get material
-	hkxMaterial* sectMat = HK_NULL;
-	if (m_options.m_exportMaterials)
-	{
-		// Use original mesh for materials
-		sectMat = createMaterial(scene, originalMesh);
 
-		if (sectMat == HK_NULL)
-		{
-			sectMat = createDefaultMaterial("default_material");
-		}
-
-		scene->m_materials.pushBack(sectMat);
-	}
-
-	// Get skinning info	
+	// Get skinning info
 	const int lSkinCount = triMesh->GetDeformerCount(FbxDeformer::eSkin);
 	FbxSkin *skin = (FbxSkin *)triMesh->GetDeformer(0, FbxDeformer::eSkin);
 
@@ -277,33 +269,104 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		}
 	}
 
-	// Vertex buffer
-	hkxVertexBuffer* newVB = new hkxVertexBuffer();
-	hkxIndexBuffer* newIB = new hkxIndexBuffer();
-	fillBuffers(triMesh, meshNode, newVB, newIB, skinControlPointWeights, skinIndicesToClusters);
-
-	hkxMeshSection* newSection = new hkxMeshSection();
-	newSection->m_material = sectMat;
-	newSection->m_vertexBuffer = newVB;
-	newSection->m_indexBuffers.setSize(1);
-	newSection->m_indexBuffers[0] = newIB;
-	exportedSections.pushBack(newSection);
-
-	if (sectMat)
+	// FbxGeometryElementMaterial maps polygons to materials. We currently do not support
+	// mapping a polygon to multiple materials so we only consider the first mapping.
+	const FbxGeometryElementMaterial* elemMat = triMesh->GetElementMaterial(0);
+	FbxLayerElement::EMappingMode mode;
+	if (elemMat)
 	{
-		sectMat->removeReference();
+		mode = elemMat->GetMappingMode();
+	}
+	else
+	{
+		// If there is no material mapping we create a dummy material and map everything to it.
+		mode = FbxLayerElement::eAllSame;
+		// If there is no material mapping there also shouldn't be any materials.
+		// Nevertheless we check this just to be sure.
+		if (matIds.isEmpty())
+		{
+			// Our dummy material needed for the mesh section has no matching counterpart on the fbx side.
+			matIds.pushBack(NULL);
+		}
+	}
+	
+	
+
+	// Create subsection for each material
+	const int materialCount = matIds.getSize();
+	for (int curMat = 0; curMat < materialCount; ++curMat)
+	{
+		hkArray<int> materialIndices;
+		materialIndices.reserve(triMesh->GetPolygonCount());
+		if (mode == FbxLayerElement::eAllSame)
+		{
+			// The material is used for all triangles. To be able to use the same code in this case
+			// we just write all indices into the array.
+			const int polygonCount = triMesh->GetPolygonCount();
+			for (int i = 0; i < polygonCount; ++i)
+			{
+				materialIndices.pushBack(i);
+			}
+		}
+		else if (mode == FbxLayerElement::eByPolygon)
+		{
+			FbxLayerElementArrayTemplate<int>& indexArray = elemMat->GetIndexArray();
+			const int indexCount = indexArray.GetCount();
+			for (int i = 0; i < indexCount; ++i)
+			{
+				if (indexArray[i] == curMat)
+				{
+					materialIndices.pushBack(i);
+				}
+			}
+		}
+		else
+		{
+			HK_WARN(0x0, "Unsupported material mapping mode. This material will be ignored.");
+			continue;
+		}
+
+		if (materialIndices.getSize() == 0)
+		{
+			// The material is not used in the mesh. Nothing is lost in this case so we just skip it.
+			continue;
+		}
+
+		hkxMaterial* sectMat = HK_NULL;
+		if (m_options.m_exportMaterials)
+		{
+			sectMat = createMaterial(matIds[curMat], triMesh, scene);
+		}
+
+		// Vertex buffer
+		hkxVertexBuffer* newVB = new hkxVertexBuffer();
+		hkxIndexBuffer* newIB = new hkxIndexBuffer();
+		fillBuffers(triMesh, meshNode, newVB, newIB, skinControlPointWeights, skinIndicesToClusters, materialIndices);
+
+		hkxMeshSection* newSection = new hkxMeshSection();
+		newSection->m_material = sectMat;
+		newSection->m_vertexBuffer = newVB;
+		newSection->m_indexBuffers.setSize(1);
+		newSection->m_indexBuffers[0] = newIB;
+		exportedSections.pushBack(newSection);
+
+		if (sectMat)
+		{
+			sectMat->removeReference();
+		}
+		newVB->removeReference();
+		newIB->removeReference();
 	}
 
-	newVB->removeReference();
-	newIB->removeReference();
-
+	// Create new mesh
 	newMesh = new hkxMesh();
 	newMesh->m_sections.setSize(exportedSections.getSize());
-	for(int cs =0; cs < newMesh->m_sections.getSize(); ++cs)
+	for(int cs = 0; cs < newMesh->m_sections.getSize(); ++cs)
 	{
 		newMesh->m_sections[cs] = exportedSections[cs];
 		exportedSections[cs]->removeReference();
 	}
+
 
 	// Add skin bindings
 	if (lSkinCount > 0)
@@ -316,7 +379,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		newSkin->m_nodeNames.setSize(lClusterCount);
 
 		// Extract bind pose transforms & bone names
-		for(int curClusterIndex=0; curClusterIndex<lClusterCount; ++curClusterIndex)
+		for(int curClusterIndex = 0; curClusterIndex < lClusterCount; ++curClusterIndex)
 		{
 			FbxCluster* lCluster = skin->GetCluster(curClusterIndex);
 
@@ -333,25 +396,40 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		}
 	}
 
+	if (m_options.m_exportVertexTangents)
+	{
+		hkxMeshSectionUtil::computeTangents(newMesh, true, originalMesh->GetName());
+	}
+
 	if (newMesh)
 	{
- 		if (newSkin)
- 		{
- 			node->m_object = newSkin;
+		if (newSkin)
+		{
+			node->m_object = newSkin;
 
- 			scene->m_meshes.pushBack(newMesh);
- 			scene->m_skinBindings.pushBack(newSkin);
- 			newMesh->removeReference();
- 			newSkin->removeReference();
- 		}
- 		else
- 		{
- 			node->m_object = newMesh;
+			scene->m_meshes.pushBack(newMesh);
+			scene->m_skinBindings.pushBack(newSkin);
+			newMesh->removeReference();
+			newSkin->removeReference();
+		}
+		else
+		{
+			node->m_object = newMesh;
 
- 			scene->m_meshes.pushBack(newMesh);
- 			newMesh->removeReference();
- 		}
+			scene->m_meshes.pushBack(newMesh);
+			newMesh->removeReference();
+		}
 	}
+}
+
+static bool isNodeFlipped(const FbxNode* node)
+{
+	if (node == NULL)
+		return false;
+
+	FbxDouble3 scaling = node->LclScaling.Get();
+	bool flipped = (scaling[0] * scaling[1] * scaling[2]) < 0;
+	return flipped != isNodeFlipped(node->GetParent());
 }
 
 void FbxToHkxConverter::fillBuffers(
@@ -360,11 +438,12 @@ void FbxToHkxConverter::fillBuffers(
 	hkxVertexBuffer* newVB,
 	hkxIndexBuffer* newIB,
 	const hkArray<float>& skinControlPointWeights,
-	const hkArray<int>& skinIndicesToClusters)
+	const hkArray<int>& skinIndicesToClusters,
+	const hkArray<int>& polyIndices)
 {
+	const int lPolygonCount = polyIndices.getSize();
 	// Vertex buffer
 	{
-		const int lPolygonCount = pMesh->GetPolygonCount();		
 		hkxVertexDescription desiredVertDesc;
 
 		desiredVertDesc.m_decls.pushBack(hkxVertexDescription::ElementDecl(hkxVertexDescription::HKX_DU_POSITION, hkxVertexDescription::HKX_DT_FLOAT, 3)); 
@@ -379,9 +458,11 @@ void FbxToHkxConverter::fillBuffers(
 			desiredVertDesc.m_decls.pushBack(hkxVertexDescription::ElementDecl(hkxVertexDescription::HKX_DU_COLOR, hkxVertexDescription::HKX_DT_UINT32, 1));
 		}
 
+		FbxStringList uvSetNameList;
+		pMesh->GetUVSetNames(uvSetNameList);
 		for (int c = 0, numUVs = pMesh->GetElementUVCount(); c < numUVs; ++c)
 		{
-			desiredVertDesc.m_decls.pushBack(hkxVertexDescription::ElementDecl(hkxVertexDescription::HKX_DU_TEXCOORD, hkxVertexDescription::HKX_DT_FLOAT, 2));
+			desiredVertDesc.m_decls.pushBack(hkxVertexDescription::ElementDecl(hkxVertexDescription::HKX_DU_TEXCOORD, hkxVertexDescription::HKX_DT_FLOAT, 2, uvSetNameList[c].Buffer()));
 		}
 
 		if (skinControlPointWeights.getSize()>0 && skinIndicesToClusters.getSize()>0)
@@ -427,16 +508,21 @@ void FbxToHkxConverter::fillBuffers(
 		textureCoordinateArrayPositions.setSize(maxNumUVs);
 		hkString::memSet4(textureCoordinateArrayPositions.begin(), 0, textureCoordinateArrayPositions.getSize());
 
-		FbxVector4* lControlPoints = pMesh->GetControlPoints(); 
+		FbxVector4* lControlPoints = pMesh->GetControlPoints();
 		int vertexId = 0;
-		for (int i = 0; i < lPolygonCount; i++)
-		{
-			const int lPolygonSize = pMesh->GetPolygonSize(i);
 
+		
+		for (int polyIdx = 0; polyIdx < lPolygonCount; polyIdx++)
+		{
+			// Indirection from the polyIndices for the current material to the mesh's polygon list.
+			int i = polyIndices[polyIdx];
+
+			const int lPolygonSize = pMesh->GetPolygonSize(i);
 			HK_ASSERT(0x0,lPolygonSize==3);
 
 			for (int j = 0; j < lPolygonSize; j++)
 			{
+				vertexId = i * 3 + j;
 				const int lControlPointIndex = pMesh->GetPolygonVertex(i, j);
 				
 				if (posBuf)
@@ -502,7 +588,7 @@ void FbxToHkxConverter::fillBuffers(
 					_normal[2] = (float)fbxNormal[2];
 					_normal[3] = 0;
 					normBuf += normStride;
-				}				
+				}
 
 				FbxStringList lUVSetNameList;
 				pMesh->GetUVSetNames(lUVSetNameList);
@@ -519,49 +605,54 @@ void FbxToHkxConverter::fillBuffers(
 					char* texCoordBuf = static_cast<char*>(newVB->getVertexDataPtr(*texDecl));
 					FbxVector2 fbxUV;
  
- 					switch (leUV->GetMappingMode())
- 					{
+					switch (leUV->GetMappingMode())
+					{
 					case FbxGeometryElement::eByControlPoint:
- 						switch(leUV->GetReferenceMode())
- 						{
+						switch(leUV->GetReferenceMode())
+						{
 						case FbxGeometryElement::eDirect:
- 							fbxUV = leUV->GetDirectArray().GetAt(lControlPointIndex);
- 							break;
+							fbxUV = leUV->GetDirectArray().GetAt(lControlPointIndex);
+							break;
 						case FbxGeometryElement::eIndexToDirect:
- 							{
- 								int id = leUV->GetIndexArray().GetAt(lControlPointIndex);
- 								fbxUV = leUV->GetDirectArray().GetAt(id);
- 							}
- 							break;
- 						default:
+							{
+								int id = leUV->GetIndexArray().GetAt(lControlPointIndex);
+								fbxUV = leUV->GetDirectArray().GetAt(id);
+							}
+							break;
+						default:
 							// Other reference modes not shown here!
- 							break;
- 						}
- 						break;
+							break;
+						}
+						break;
  
- 					case FbxGeometryElement::eByPolygonVertex:
- 						{
- 							int lTextureUVIndex = pMesh->GetTextureUVIndex(i, j);
- 							switch(leUV->GetReferenceMode())
- 							{
- 							case FbxGeometryElement::eDirect:
- 							case FbxGeometryElement::eIndexToDirect:
- 								{
- 									fbxUV = leUV->GetDirectArray().GetAt(lTextureUVIndex);
- 								}
- 								break;
- 							default:
+					case FbxGeometryElement::eByPolygonVertex:
+						{
+							// UV indices are monotonously increasing with each vertex in each polygon.
+							int lTextureUVIndex = i * 3 + j; // All polygons have 3 vertices.
+							switch(leUV->GetReferenceMode())
+							{
+							case FbxGeometryElement::eDirect:
+								{
+									fbxUV = leUV->GetDirectArray().GetAt(lTextureUVIndex);
+								}
+							case FbxGeometryElement::eIndexToDirect:
+								{
+									int id = leUV->GetIndexArray().GetAt(lTextureUVIndex);
+									fbxUV = leUV->GetDirectArray().GetAt(id);
+								}
+								break;
+							default:
 								// Other reference modes not shown here!
- 								break;
- 							}
- 						}
- 						break;
+								break;
+							}
+						}
+						break;
  
- 					case FbxGeometryElement::eByPolygon: // Doesn't make much sense for UVs
- 					case FbxGeometryElement::eAllSame:   // Doesn't make much sense for UVs
- 					case FbxGeometryElement::eNone:       // Doesn't make much sense for UVs
- 						break;
- 					}
+					case FbxGeometryElement::eByPolygon: // Doesn't make much sense for UVs
+					case FbxGeometryElement::eAllSame:   // Doesn't make much sense for UVs
+					case FbxGeometryElement::eNone:       // Doesn't make much sense for UVs
+						break;
+					}
 
 					float* _uv =(float*)(texCoordBuf + textureCoordinateArrayPositions[t]);
 					_uv[0] = (float)fbxUV[0];
@@ -569,59 +660,59 @@ void FbxToHkxConverter::fillBuffers(
 					textureCoordinateArrayPositions[t] += texCoordStride;
 				}
 
- 				if (colorBuf)
- 				{
- 					FbxGeometryElementVertexColor* leVtxc = pMesh->GetElementVertexColor(0);
+				if (colorBuf)
+				{
+					FbxGeometryElementVertexColor* leVtxc = pMesh->GetElementVertexColor(0);
 					FbxColor fbxColor;
  
- 					if (leVtxc != NULL)
- 					{
-	 					switch(leVtxc->GetMappingMode())
-	 					{
-	 					case FbxGeometryElement::eByControlPoint:
-	 						switch(leVtxc->GetReferenceMode())
-	 						{
-	 						case FbxGeometryElement::eDirect:
-	 							fbxColor = leVtxc->GetDirectArray().GetAt(lControlPointIndex);
-	 							break;
-	 						case FbxGeometryElement::eIndexToDirect:
-	 							{
-	 								int id = leVtxc->GetIndexArray().GetAt(lControlPointIndex);
-	 								fbxColor = leVtxc->GetDirectArray().GetAt(id);
-	 							}
-	 							break;
-	 						default:
+					if (leVtxc != NULL)
+					{
+						switch(leVtxc->GetMappingMode())
+						{
+						case FbxGeometryElement::eByControlPoint:
+							switch(leVtxc->GetReferenceMode())
+							{
+							case FbxGeometryElement::eDirect:
+								fbxColor = leVtxc->GetDirectArray().GetAt(lControlPointIndex);
+								break;
+							case FbxGeometryElement::eIndexToDirect:
+								{
+									int id = leVtxc->GetIndexArray().GetAt(lControlPointIndex);
+									fbxColor = leVtxc->GetDirectArray().GetAt(id);
+								}
+								break;
+							default:
 								// Other reference modes not shown here!
-	 							break;
-	 						}
-	 						break;
+								break;
+							}
+							break;
 	 
-	 					case FbxGeometryElement::eByPolygonVertex:
-	 						{
-	 							switch(leVtxc->GetReferenceMode())
-	 							{
-	 							case FbxGeometryElement::eDirect:
-	 								fbxColor = leVtxc->GetDirectArray().GetAt(vertexId);
-	 								break;
-	 							case FbxGeometryElement::eIndexToDirect:
-	 								{
-	 									int id = leVtxc->GetIndexArray().GetAt(vertexId);
-	 									fbxColor = leVtxc->GetDirectArray().GetAt(id);
-	 								}
-	 								break;
-	 							default:
+						case FbxGeometryElement::eByPolygonVertex:
+							{
+								switch(leVtxc->GetReferenceMode())
+								{
+								case FbxGeometryElement::eDirect:
+									fbxColor = leVtxc->GetDirectArray().GetAt(vertexId);
+									break;
+								case FbxGeometryElement::eIndexToDirect:
+									{
+										int id = leVtxc->GetIndexArray().GetAt(vertexId);
+										fbxColor = leVtxc->GetDirectArray().GetAt(id);
+									}
+									break;
+								default:
 									// Other reference modes not shown here!
-	 								break;
-	 							}
-	 						}
-	 						break;
+									break;
+								}
+							}
+							break;
 	 
-	 					case FbxGeometryElement::eByPolygon: // Doesn't make much sense for UVs
-	 					case FbxGeometryElement::eAllSame:   // Doesn't make much sense for UVs
-	 					case FbxGeometryElement::eNone:      // Doesn't make much sense for UVs
-	 						break;
-	 					}
- 					}
+						case FbxGeometryElement::eByPolygon: // Doesn't make much sense for UVs
+						case FbxGeometryElement::eAllSame:   // Doesn't make much sense for UVs
+						case FbxGeometryElement::eNone:      // Doesn't make much sense for UVs
+							break;
+						}
+					}
 
 					// Vertex color
 					unsigned color = elementsToARGB(fbxColor.mRed, fbxColor.mGreen, fbxColor.mBlue, fbxColor.mAlpha); 
@@ -630,7 +721,7 @@ void FbxToHkxConverter::fillBuffers(
 					*_color = color;
 
 					colorBuf += colorStride;
- 				}
+				}
 
 				if (weightsBuf && indicesBuf)
 				{
@@ -683,17 +774,23 @@ void FbxToHkxConverter::fillBuffers(
 	{
 		newIB->m_indexType = hkxIndexBuffer::INDEX_TYPE_TRI_LIST;
 		newIB->m_vertexBaseOffset = 0;
-		newIB->m_length = pMesh->GetPolygonCount()* 3;
-		newIB->m_indices16.setSize(newIB->m_length);
+		newIB->m_length = lPolygonCount * 3;
+		newIB->m_indices32.setSize(newIB->m_length);
 
-		hkUint16* curIndex = newIB->m_indices16.begin();
-		for(int i = 0, vertexId = 0; i < pMesh->GetPolygonCount(); i++)
+		hkUint32* curIndex = newIB->m_indices32.begin();
+		for (int polygonIndex = 0, vertexId = 0; polygonIndex < lPolygonCount; polygonIndex++)
 		{
-			for(int j = 0; j < 3; j++)
+			for (int vertexIndex = 0; vertexIndex < 3; vertexIndex++)
 			{
-				*curIndex =(hkUint16)vertexId++;
+				*curIndex = vertexId++;
 				curIndex++;
 			}
+		}
+
+		// Mirrored meshes need to have their faces flipped (EXP-2773)
+		if (isNodeFlipped(originalNode))
+		{
+			hkxSceneUtils::flipWinding(*newIB);
 		}
 	}
 }
@@ -807,26 +904,43 @@ void FbxToHkxConverter::convertTextures(hkxScene *scene, FbxSurfaceMaterial* fbx
 	}
 }
 
-hkxMaterial* FbxToHkxConverter::createMaterial(hkxScene *scene, FbxMesh* pMesh)
+void FbxToHkxConverter::getMaterialsInMesh(FbxMesh* pMesh, hkArray<FbxSurfaceMaterial*>& materialsOut)
 {
-	hkxMaterial* mat = HK_NULL;
-	FbxSurfaceMaterial *lMaterial = 0;
 	FbxNode* lNode = pMesh->GetNode();
-
 	int lMaterialCount = 0;
 	if (lNode)
 	{
 		lMaterialCount = lNode->GetMaterialCount();
 	}
 
-	// Currently assuming just one material per mesh
-	if (lMaterialCount > 0)
+	for (int materialIdx = 0; materialIdx < lMaterialCount; ++materialIdx)
 	{
-		lMaterial = lNode->GetMaterial(0);
+		FbxSurfaceMaterial* lMaterial = lNode->GetMaterial(materialIdx);
+		materialsOut.pushBack(lMaterial);
+	}
+}
+
+hkxMaterial* FbxToHkxConverter::createMaterial(FbxSurfaceMaterial* lMaterial, FbxMesh* pMesh, hkxScene* scene)
+{
+	hkxMaterial* mat = HK_NULL;
+	{
+		// Test whether this material has already been created.
+		auto iterator = m_convertedMaterials.findKey(lMaterial);
+		if (m_convertedMaterials.isValid(iterator))
+		{
+			mat = m_convertedMaterials.getValue(iterator);
+			mat->addReference();
+			return mat;
+		}
+	}
+	
+	if (lMaterial)
+	{
 		mat = createDefaultMaterial(lMaterial->GetName());
+		m_convertedMaterials.insert(lMaterial, mat);
 
 		if (lMaterial->GetClassId().Is(FbxSurfacePhong::ClassId))
-		{			
+		{
 			FbxSurfacePhong* phongMaterial = (FbxSurfacePhong *)lMaterial;
 
 			const float transparency =  1.0f - static_cast<float>(phongMaterial->TransparencyFactor.Get());
@@ -857,7 +971,6 @@ hkxMaterial* FbxToHkxConverter::createMaterial(hkxScene *scene, FbxMesh* pMesh)
 		}
 
 		// Extract texture stage info
-		if (lMaterial)
 		{
 			// Get all UV set names from the mesh
 			FbxStringList lUVSetNameList;
@@ -866,13 +979,20 @@ hkxMaterial* FbxToHkxConverter::createMaterial(hkxScene *scene, FbxMesh* pMesh)
 			convertTextures(scene, lMaterial, lUVSetNameList, mat);
 		}
 	}
+	else
+	{
+		mat = createDefaultMaterial("Dummy");
+		m_convertedMaterials.insert(lMaterial, mat);
+	}
+	
+	scene->m_materials.pushBack(mat);
 	return mat;
 }
 
 /*
- * Havok SDK
+ * Havok SDK - NO SOURCE PC DOWNLOAD, BUILD(#20140907)
  * 
- * Confidential Information of Havok.  (C) Copyright 1999-2013
+ * Confidential Information of Havok.  (C) Copyright 1999-2014
  * Telekinesys Research Limited t/a Havok. All Rights Reserved. The Havok
  * Logo, and the Havok buzzsaw logo are trademarks of Havok.  Title, ownership
  * rights, and intellectual property rights in the Havok software remain in
@@ -880,6 +1000,6 @@ hkxMaterial* FbxToHkxConverter::createMaterial(hkxScene *scene, FbxMesh* pMesh)
  * 
  * Use of this software for evaluation purposes is subject to and indicates
  * acceptance of the End User licence Agreement for this product. A copy of
- * the license is included with this software and is also available from salesteam@havok.com.
+ * the license is included with this software and is also available at www.havok.com/tryhavok.
  * 
  */

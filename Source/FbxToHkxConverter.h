@@ -2,7 +2,7 @@
  *
  * Confidential Information of Telekinesys Research Limited (t/a Havok). Not for disclosure or distribution without Havok's
  * prior written consent. This software contains code, techniques and know-how which is confidential and proprietary to Havok.
- * Product and Trade Secret source code contains trade secrets of Havok. Havok Software (C) Copyright 1999-2013 Telekinesys Research Limited t/a Havok. All Rights Reserved. Use of this software is subject to the terms of an end user license agreement.
+ * Product and Trade Secret source code contains trade secrets of Havok. Havok Software (C) Copyright 1999-2014 Telekinesys Research Limited t/a Havok. All Rights Reserved. Use of this software is subject to the terms of an end user license agreement.
  *
  */
 
@@ -47,7 +47,7 @@ public:
 	FbxToHkxConverter(const Options& options);
 	~FbxToHkxConverter();
 	
-	bool createScenes(FbxScene* fbxScene);
+	bool createScenes(FbxScene* fbxScene, bool noTakes);
 	void saveScenes(const char *path, const char *name);
 
 private:
@@ -78,7 +78,8 @@ private:
 		hkxVertexBuffer* newVB,
 		hkxIndexBuffer* newIB,
 		const hkArray<float>& skinControlPointWeights,
-		const hkArray<int>& skinIndicesToClusters);
+		const hkArray<int>& skinIndicesToClusters,
+		const hkArray<int>& polyIndices);
 	static void findChildren(FbxNode* root, hkArray<FbxNode*>& children, FbxNodeAttribute::EType type);
 
 	// Get the global position of the node for the current pose.
@@ -100,7 +101,8 @@ private:
 	void addCamera(hkxScene *scene, FbxNode* cameraNode, hkxNode* node);
 	void addLight(hkxScene *scene, FbxNode* lightNode, hkxNode* node);
 	void addSpline(hkxScene *scene, FbxNode* splineNode, hkxNode* node);
-	hkxMaterial* createMaterial(hkxScene *scene, FbxMesh* pMesh);
+	hkxMaterial* createMaterial(FbxSurfaceMaterial* lMaterial, FbxMesh* pMesh, hkxScene* scene);
+	void getMaterialsInMesh(FbxMesh* pMesh, hkArray<FbxSurfaceMaterial*>& materialsOut);
 
 	void extractKeyFramesAndAnnotations(hkxScene *scene, FbxNode* fbxChildNode, hkxNode* newChildNode, int animStackIndex);
 
@@ -153,14 +155,16 @@ private:
 
 	// A cache of converted FBX -> Havok textures
 	hkPointerMap<FbxTexture*, hkRefVariant*> m_convertedTextures;
+	// A cache of converted FBX -> Havok materials
+	hkPointerMap<FbxSurfaceMaterial*, hkxMaterial*> m_convertedMaterials;
 };
 
 #endif
 
 /*
- * Havok SDK
+ * Havok SDK - NO SOURCE PC DOWNLOAD, BUILD(#20140907)
  * 
- * Confidential Information of Havok.  (C) Copyright 1999-2013
+ * Confidential Information of Havok.  (C) Copyright 1999-2014
  * Telekinesys Research Limited t/a Havok. All Rights Reserved. The Havok
  * Logo, and the Havok buzzsaw logo are trademarks of Havok.  Title, ownership
  * rights, and intellectual property rights in the Havok software remain in
@@ -168,6 +172,6 @@ private:
  * 
  * Use of this software for evaluation purposes is subject to and indicates
  * acceptance of the End User licence Agreement for this product. A copy of
- * the license is included with this software and is also available from salesteam@havok.com.
+ * the license is included with this software and is also available at www.havok.com/tryhavok.
  * 
  */

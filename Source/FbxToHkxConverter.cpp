@@ -2,7 +2,7 @@
  *
  * Confidential Information of Telekinesys Research Limited (t/a Havok). Not for disclosure or distribution without Havok's
  * prior written consent. This software contains code, techniques and know-how which is confidential and proprietary to Havok.
- * Product and Trade Secret source code contains trade secrets of Havok. Havok Software (C) Copyright 1999-2013 Telekinesys Research Limited t/a Havok. All Rights Reserved. Use of this software is subject to the terms of an end user license agreement.
+ * Product and Trade Secret source code contains trade secrets of Havok. Havok Software (C) Copyright 1999-2014 Telekinesys Research Limited t/a Havok. All Rights Reserved. Use of this software is subject to the terms of an end user license agreement.
  *
  */
 
@@ -22,6 +22,8 @@
 #include <Common/Base/Ext/hkBaseExt.h>
 #include <Common/Base/Fwd/hkwindows.h>
 
+#include <Common/Base/Algorithm/Sort/hkSort.h>
+
 // Get the matrix of the given pose
 FbxAMatrix GetPoseMatrix(FbxPose* pPose, int pNodeIndex);
 
@@ -35,9 +37,10 @@ static void PrintLine();
 
 FbxToHkxConverter::Options::Options(FbxManager *fbxSdkManager) :
 	m_fbxSdkManager(fbxSdkManager),
-	m_exportMeshes(true), m_exportAttributes(true), m_exportLights(true), m_exportCameras(true),
-	m_exportSplines(true), m_visibleOnly(false), m_selectedOnly(false), 
-	m_exportMaterials(true), m_storeKeyframeSamplePoints(true), m_exportAnnotations(true)
+	m_exportMeshes(true), m_exportMaterials(true), m_exportAttributes(true),
+	m_exportAnnotations(true), m_exportLights(true), m_exportCameras(true),
+	m_exportSplines(true), m_exportVertexTangents(true), m_exportVertexAnimations(true),
+	m_visibleOnly(false), m_selectedOnly(false), m_storeKeyframeSamplePoints(true)
 {
 	HK_ASSERT(0x0, m_fbxSdkManager);
 }
@@ -72,7 +75,7 @@ void FbxToHkxConverter::clear()
 	m_convertedTextures.clear();
 }
 
-void FbxToHkxConverter::saveScenes(const char *path, const char *name)
+void FbxToHkxConverter::saveScenes(const char* path, const char* name)
 {
 	printf("Output path: %s\n", path);
 
@@ -108,7 +111,7 @@ void FbxToHkxConverter::saveScenes(const char *path, const char *name)
 		tagfile.append(".hkt");
 
 		hkStringBuf tagpath = path;
-		tagpath.append(tagfile);
+		tagpath.pathAppend(tagfile);
 
 		if ( hkSerializeUtil::save(
 				currentRootContainer,
@@ -132,7 +135,7 @@ void FbxToHkxConverter::saveScenes(const char *path, const char *name)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter/hctMaxSceneExporter::createScene()
-bool FbxToHkxConverter::createScenes(FbxScene* fbxScene)
+bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
 {
 	clear();
 
@@ -179,17 +182,33 @@ bool FbxToHkxConverter::createScenes(FbxScene* fbxScene)
 		FbxTime timePerFrame; timePerFrame.SetTime(0, 0, 0, 1, 0, m_curFbxScene->GetGlobalSettings().GetTimeMode());
 		m_startTime = animTimeSpan.GetStart();
 	}
-	printf("Animation stacks: %d\n", m_numAnimStacks);
-
-	createSceneStack(-1);
-
-	for (int animStackIndex = 0;
-		 animStackIndex < m_numAnimStacks && m_numBones > 0;
-		 animStackIndex++)
-	{
-		createSceneStack(animStackIndex);
-	}
 	
+	if (noTakes)
+	{
+		if (m_numAnimStacks > 0)
+		{
+			printf("'-noTakes' option set, only exporting first animation.\n");
+			createSceneStack(0);
+		}
+		else
+		{
+			printf("'-noTakes' option set and no animation present, only exporting static geometry.\n");
+			createSceneStack(-1);
+		}
+	}
+	else
+	{
+		printf("Animation stacks: %d\n", m_numAnimStacks);
+		createSceneStack(-1);
+
+		for (int animStackIndex = 0;
+			animStackIndex < m_numAnimStacks && m_numBones > 0;
+			animStackIndex++)
+		{
+			createSceneStack(animStackIndex);
+		}
+	}
+
 	return true;
 }
 
@@ -222,7 +241,7 @@ bool FbxToHkxConverter::createSceneStack(int animStackIndex)
 		if (currentAnimStackIndex != -1)
 		{
 			lAnimStack = m_curFbxScene->GetSrcObject<FbxAnimStack>(currentAnimStackIndex);
-			m_curFbxScene->GetEvaluator()->SetContext(lAnimStack);
+			m_curFbxScene->SetCurrentAnimationStack(lAnimStack);
 		}
 
 		if (rigPass)
@@ -276,7 +295,7 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 
 		hkxNode* newChildNode = new hkxNode();
 		{
-			newChildNode->m_name = fbxChildNode->GetName();			
+			newChildNode->m_name = fbxChildNode->GetName();
 			node->m_children.pushBack(newChildNode);
 		}
 
@@ -443,14 +462,13 @@ void FbxToHkxConverter::extractKeyFramesAndAnnotations(hkxScene *scene, FbxNode*
 				{
 					FbxString propName  = prop.GetName();
 					FbxDataType lDataType = prop.GetPropertyDataType();
-					hkStringOld name(propName.Buffer(), (int) propName.GetLen());
-					if (name.asUpperCase().beginsWith("HK") && lDataType.GetType() == eFbxEnum)
+					if (lDataType.GetType() == eFbxEnum && hkString::beginsWithCase(propName.Buffer(), "HK"))
 					{
 						FbxAnimLayer* lAnimLayer = lAnimStack->GetMember<FbxAnimLayer>(0);
 						FbxAnimCurve* lAnimCurve = prop.GetCurve(lAnimLayer);
 
 						int currentKeyIndex;
-						const int keyIndex = (int) lAnimCurve->KeyFind(time, &currentKeyIndex);
+						const int keyIndex = (int)lAnimCurve->KeyFind(time, &currentKeyIndex);
 						const int priorKeyIndex = (int) lAnimCurve->KeyFind(priorSampleTime);
 
 						// Only store annotations on frames where they're explicitly keyframed, or if this is the first keyframe 
@@ -461,7 +479,9 @@ void FbxToHkxConverter::extractKeyFramesAndAnnotations(hkxScene *scene, FbxNode*
 							const char* enumValue = prop.GetEnumValue(currentEnumValueIndex);
 							hkxNode::AnnotationData& annotation = newChildNode->m_annotations.expandOne();
 							annotation.m_time = (hkReal) (time - startTime).GetSecondDouble();
-							annotation.m_description = (name + hkStringOld(enumValue, hkString::strLen(enumValue))).cString();
+
+							hkStringBuf description(propName.Buffer(), enumValue);
+							annotation.m_description = description;
 						}
 					}
 					prop = fbxChildNode->GetNextProperty(prop);
@@ -598,21 +618,74 @@ FbxAMatrix GetPoseMatrix(FbxPose* pPose, int pNodeIndex)
 
 static void GetCustomVisionData(FbxNode* fbxNode, hkStringPtr& userPropertiesStr)
 {
-	userPropertiesStr = "";
+	hkStringBuf propertyBuf = "";
+	// When exported from max the user data will just be one big string.
+	// As parsing can be done in the filter manager we just copy all string properties into one string.
 	for(FbxProperty prop = fbxNode->GetFirstProperty(); prop.IsValid(); prop = fbxNode->GetNextProperty(prop))
 	{
+		FbxString propertyName = prop.GetName();
 		EFbxType type = prop.GetPropertyDataType().GetType();
-		if (type == eFbxString)
+		const char* name = propertyName.Buffer();
+		
+		switch (type)
 		{
-			FbxString propertyData = prop.Get<FbxString>();
-			const char* text = propertyData.Buffer();
-			if (!hkString::strNcasecmp(text, "vision", 6))
+		case eFbxChar:
+		case eFbxShort:
+		case eFbxUInt:
+		case eFbxLongLong:
 			{
-				userPropertiesStr = text;
-				break;
+				FbxLongLong propertyData = prop.Get<FbxLongLong>();
+				propertyBuf.appendPrintf("%s = %lld\n", name, propertyData);
 			}
+			break;
+		case eFbxUChar:
+		case eFbxUShort:
+		case eFbxInt:
+		case eFbxULongLong:
+			{
+				FbxULongLong propertyData = prop.Get<FbxULongLong>();
+				propertyBuf.appendPrintf("%s = %llu\n", name, propertyData);
+			}
+			break;
+		case eFbxBool:
+			{
+				FbxBool propertyData = prop.Get<FbxBool>();
+				propertyBuf.appendPrintf("%s = %s\n", name, propertyData ? "1" : "0");
+			}
+			break;
+		case eFbxHalfFloat:
+		case eFbxFloat:
+		case eFbxDouble:
+			{
+				FbxDouble propertyData = prop.Get<FbxDouble>();
+				propertyBuf.appendPrintf("%s = %f\n", name, propertyData);
+			}
+			break;
+		//case fbxsdk_2014_2_1::eFbxEnum:
+		//  break;
+		case eFbxString:
+			{
+				// The Maya and Max Vision plugins write all properties into this single variable:
+				if (hkString::strCmp("UDP3DSMAX", name) == 0)
+				{
+					FbxString propertyData = prop.Get<FbxString>();
+					const char* text = propertyData.Buffer();
+					propertyBuf.appendJoin(text, "\n");
+				}
+				else
+				{
+					FbxString propertyData = prop.Get<FbxString>();
+					const char* text = propertyData.Buffer();
+					propertyBuf.appendJoin(name, " = ", text, "\n");
+				}
+			}
+			break;
+		default:
+			break;
 		}
 	}
+
+	userPropertiesStr = propertyBuf;
 }
 
 FbxAMatrix GetGeometry(FbxNode* pNode)
@@ -630,9 +703,9 @@ static void PrintLine()
 }
 
 /*
- * Havok SDK
+ * Havok SDK - NO SOURCE PC DOWNLOAD, BUILD(#20140907)
  * 
- * Confidential Information of Havok.  (C) Copyright 1999-2013
+ * Confidential Information of Havok.  (C) Copyright 1999-2014
  * Telekinesys Research Limited t/a Havok. All Rights Reserved. The Havok
  * Logo, and the Havok buzzsaw logo are trademarks of Havok.  Title, ownership
  * rights, and intellectual property rights in the Havok software remain in
@@ -640,6 +713,6 @@ static void PrintLine()
  * 
  * Use of this software for evaluation purposes is subject to and indicates
  * acceptance of the End User licence Agreement for this product. A copy of
- * the license is included with this software and is also available from salesteam@havok.com.
+ * the license is included with this software and is also available at www.havok.com/tryhavok.
  * 
  */
