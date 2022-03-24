@@ -71,9 +71,9 @@ If you have an FBX file named **StaticBox.fbx**, passing it to **convert.py** al
 Dependencies
 ------------
 
-* [Visual C++ 2010][1]
+* [Visual C++ 2012][1]
 * [Python 2.7.X][2]
-* [FBX SDK 2013.3 VS 2010][4] - **We will be upgrading to 2014.1 soon!**
+* [FBX SDK 2020.1 VS 2012][4]
 * [Python Tools for Visual Studio][5] - Useful for debugging your projects and we include a .pyproj/.sln so you'll need to have it installed to successfully open the solution.
 * [py2exe][6] - Needed if you're going to create a package
 
@@ -82,7 +82,7 @@ Compiling
 
 1. Install the Project Anarchy SDK from the [homepage][3]
     * Make sure the **Havok Content Tools** (32bit or 64bit) and **Havok Anarchy SDK** are downloaded and installed
-2. Install [FBX SDK 2013.3 VS 2010][4]
+2. Install [FBX SDK 2020.1 VS 2012][4]
 2. Git clone the repository into **$(AnarchySDK)\\Tools\\FBXImporter**. From **$(AnarchySDK)\\Tools** on the command line execute the following:
     * ```git clone https://github.com/projectanarchy/fbximporter.git FBXImporter```
 3. Open **$(AnarchySDK)\\Tools\\FBXImporter\\Workspace\\FBXImporter.sln**
@@ -104,9 +104,9 @@ Confidential Information of Havok.  (C) Copyright 1999-2013 Telekinesys Research
 
 Use of this software for evaluation purposes is subject to and indicates acceptance of the End User licence Agreement for this product. A copy of the license is included with this software and is also available from salesteam@havok.com.
 
-[1]: http://www.microsoft.com/visualstudio/eng/downloads#d-2010-express
+[1]: https://visualstudio.microsoft.com/
 [2]: http://www.python.org/download/releases/2.7.5/
 [3]: http://www.projectanarchy.com/download
-[4]: http://usa.autodesk.com/adsk/servlet/pc/item?siteID=123112&id=10775892
+[4]: https://www.autodesk.com/developer-network/platform-technologies/fbx-sdk-2020-1
 [5]: http://pytools.codeplex.com/
 [6]: http://www.py2exe.org/
