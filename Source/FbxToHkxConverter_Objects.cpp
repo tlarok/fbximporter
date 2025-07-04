@@ -293,218 +293,186 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	}
 	
 	// Create subsection for each material
+	// we will make one big mat but add the ones in fixedVerts to a separate vector
 	const int materialCount = matIds.getSize();
-	printf("Mesh contains %i materials\r\n",materialCount);
-	for (int curMat = 0; curMat < materialCount; ++curMat)
+	
+	hkArray<hkArray<int>> allMaterialsAndTherIndicies;
+	allMaterialsAndTherIndicies.setSize(materialCount+1); // one per material plus one with all indicies
+	hkArray<int> materialIndices;
+	hkArray<int> fixedVertsIndices;
+	materialIndices.reserve(triMesh->GetPolygonCount());
+	FbxLayerElementArrayTemplate<int>& indexArray = elemMat->GetIndexArray();
+	const int indexCount = indexArray.GetCount();
+	printf("Mesh contains %i materials and has %i polygons with indexcount %i\r\n",materialCount, triMesh->GetPolygonCount(), indexCount);
+	for (int i = 0; i < indexCount; ++i)
 	{
-		hkArray<int> materialIndices;
-		materialIndices.reserve(triMesh->GetPolygonCount());
-		if (mode == FbxLayerElement::eAllSame)
+		for (int curMat = 0; curMat < materialCount; ++curMat)
 		{
-			// The material is used for all triangles. To be able to use the same code in this case
-			// we just write all indices into the array.
-			const int polygonCount = triMesh->GetPolygonCount();
-			for (int i = 0; i < polygonCount; ++i)
+
+			if (mode == FbxLayerElement::eAllSame)
 			{
-				materialIndices.pushBack(i);
-			}
-		}
-		else if (mode == FbxLayerElement::eByPolygon)
-		{
-			FbxLayerElementArrayTemplate<int>& indexArray = elemMat->GetIndexArray();
-			const int indexCount = indexArray.GetCount();
-			for (int i = 0; i < indexCount; ++i)
-			{
-				if (indexArray[i] == curMat)
+				// The material is used for all triangles. To be able to use the same code in this case
+				// we just write all indices into the array.
+				// The last entry in the array (at materialCount) contains all vertices
+				const int polygonCount = triMesh->GetPolygonCount();
+				for (int polygonIndex = 0; polygonIndex < polygonCount; ++polygonIndex)
 				{
-					materialIndices.pushBack(i);
-				}
-			}
-		}
-		else
-		{
-			HK_WARN(0x0, "Unsupported material mapping mode. This material will be ignored.");
-			continue;
-		}
-
-		if (materialIndices.getSize() == 0)
-		{
-			// The material is not used in the mesh. Nothing is lost in this case so we just skip it.
-			continue;
-		}
-
-		hkxMaterial* sectMat = HK_NULL;
-		if (m_options.m_exportMaterials)
-		{
-			sectMat = createMaterial(matIds[curMat], triMesh, scene);
-		}
-		
-
-		// Vertex buffer
-		hkxVertexBuffer* newVB = new hkxVertexBuffer();
-		hkxIndexBuffer* newIB = new hkxIndexBuffer();
-		fillBuffers(triMesh, meshNode, newVB, newIB, skinControlPointWeights, skinIndicesToClusters, materialIndices);
-
-		hkxMeshSection* newSection = new hkxMeshSection();
-		newSection->m_material = sectMat;
-		newSection->m_vertexBuffer = newVB;
-		newSection->m_indexBuffers.setSize(1);
-		newSection->m_indexBuffers[0] = newIB;
-		newSection->m_userChannels.setSize(materialCount-1); 
-		
-		// vertex order is apparently UV Map order!
-
-
-		matIds[curMat]->GetName();
-		printf("curmat name: ");
-		printf(matIds[curMat]->GetName());
-		printf("\r\n");
-		hkxVertexSelectionChannel* vFixedVerts = new hkxVertexSelectionChannel();
-		vFixedVerts->m_selectedVertices.clear();
-
-		if (strcmp(matIds[curMat]->GetName(), "fixedVerts")==0)
-		{
-			printf("Found a fixedVerts material: %s, adding a hkxVertexSelectionChannel\r\n", matIds[curMat]->GetName());
-			// add vertexselction channel to exportedSections
-			// add a hkxVertexSelectionSet to it
-
-			printf("size of vertex buffer vertexBaseOffset: %i \r\n",newIB->m_vertexBaseOffset);
-			printf("Number of triangles in indexBuffer: %i \r\n", newIB->getNumTriangles());
-			printf("Number of vertices in indexBuffer: %i \r\n",newIB->getNumTriangles()*3);
-			printf("size of vertex buffer: %i \r\n",newVB->getNumVertices());
-			printf("size of materialIndicies: %i \r\n", materialIndices.getSize());
-
-			/// The vertex index is usually the index given by index buffer + vertexBaseOffset.
-			/// If the indexBase is null then the format is assumed to be a triangle list
-			/// starting at vertexBaseOffset.
-
-
-			// TEST VERSION WITH UV INDICIES
-			FbxVector4* lControlPoints = triMesh->GetControlPoints();
-			FbxVector2 fbxUV;
-			const int maxNumUVs = (int) hkxMaterial::PROPERTY_MTL_UV_ID_STAGE_MAX - (int) hkxMaterial::PROPERTY_MTL_UV_ID_STAGE0;
-
-			int vertexId = 0;
-			FbxStringList lUVSetNameList;
-			triMesh->GetUVSetNames(lUVSetNameList);
-
-			printf("Number of UVs: %i\r\n", lUVSetNameList.GetCount());
-			printf("size of vFixedVerts: %i \r\n", vFixedVerts->m_selectedVertices.getSize());
-
-			bool debugDumpIDs = true;
-			int indexBufferID = 0;
-			for(int t = 0, numUVs = hkMath::min2(lUVSetNameList.GetCount(), maxNumUVs); t < numUVs; ++t)
-			{
-				const char* lUVSetName = lUVSetNameList.GetStringAt(t);
-				printf("UV Set Name: %s\r\n", lUVSetName);
-				const FbxGeometryElementUV* leUV = triMesh->GetElementUV(lUVSetName);
-				printf("UVMappingMode (enum): %i\r\n", lUVSetNameList.GetCount());
-				const int lPolygonCount = materialIndices.getSize();
-				printf("Polygoncount in fixedVerts: %i\r\n", lPolygonCount);
-				for (int polyIdx = 0; polyIdx < lPolygonCount; polyIdx++)
-				{
-					// Indirection from the polyIndices for the current material to the mesh's polygon list.
-					int i = materialIndices[polyIdx];
-					for (int j = 0; j < 3; j++)
+					if (std::find(allMaterialsAndTherIndicies[materialCount].begin(), allMaterialsAndTherIndicies[materialCount].end(), i) == allMaterialsAndTherIndicies[materialCount].end()) 
 					{
-						vertexId = i * 3 + j;
-						indexBufferID = polyIdx * 3 + j;
-						vFixedVerts->m_selectedVertices.pushBack(indexBufferID);
-						continue;
-
-						const int lControlPointIndex = triMesh->GetPolygonVertex(i, j);
-						switch (leUV->GetMappingMode())
-						{
-						case FbxGeometryElement::eByControlPoint:
-							switch(leUV->GetReferenceMode())
-							{
-							case FbxGeometryElement::eDirect:
-								fbxUV = leUV->GetDirectArray().GetAt(lControlPointIndex);
-								vFixedVerts->m_selectedVertices.pushBack(lControlPointIndex);
-								if (debugDumpIDs)
-									printf("eByControlPoint direct id: %i fbxUV: (%f, %f)\r\n", lControlPointIndex,  fbxUV.mData[0], fbxUV.mData[1]);
-								break;
-							case FbxGeometryElement::eIndexToDirect:
-								{
-									int id = leUV->GetIndexArray().GetAt(lControlPointIndex);
-									fbxUV = leUV->GetDirectArray().GetAt(id);
-									if (debugDumpIDs)
-										printf("eByControlPoint index to direct id: %i fbxUV: (%f, %f)\r\n", id,  fbxUV.mData[0], fbxUV.mData[1]);
-									vFixedVerts->m_selectedVertices.pushBack(id);
-								}
-								break;
-							default:
-								// Other reference modes not shown here!
-								break;
-							}
-							break;
-
-						case FbxGeometryElement::eByPolygonVertex:
-							{
-								// UV indices are monotonously increasing with each vertex in each polygon.
-								int lTextureUVIndex = i * 3 + j; // All polygons have 3 vertices.
-								printf("equality: %s", vertexId==lTextureUVIndex ? "true" : "false");
-								switch(leUV->GetReferenceMode())
-								{
-								case FbxGeometryElement::eDirect:
-									{
-										fbxUV = leUV->GetDirectArray().GetAt(lTextureUVIndex);
-										vFixedVerts->m_selectedVertices.pushBack(lTextureUVIndex);
-										if (debugDumpIDs)
-											printf("eByPolygonVertex direct id: %i fbxUV: (%f, %f)\r\n", lTextureUVIndex,  fbxUV.mData[0], fbxUV.mData[1]);
-									}
-								case FbxGeometryElement::eIndexToDirect:
-									{
-										int id = leUV->GetIndexArray().GetAt(lTextureUVIndex);
-										fbxUV = leUV->GetDirectArray().GetAt(id);
-										if (debugDumpIDs)
-											printf("eByPolygonVertex index to direct id: %i, UVindex: %i fbxUV: (%f, %f)\r\n", id, lTextureUVIndex,  fbxUV.mData[0], fbxUV.mData[1]);
-										vFixedVerts->m_selectedVertices.pushBack(id);
-									}
-									break;
-								default:
-									// Other reference modes not shown here!
-									break;
-								}
-							}
-							break;
-
-						case FbxGeometryElement::eByPolygon: // Doesn't make much sense for UVs
-						case FbxGeometryElement::eAllSame:   // Doesn't make much sense for UVs
-						case FbxGeometryElement::eNone:       // Doesn't make much sense for UVs
-							break;
-						}
-
+						// Only add if not found
+						allMaterialsAndTherIndicies[materialCount].pushBack(polygonIndex);
 					}
 				}
 			}
-			// END TEST VERSION WITH UV INDICIES
+			else if (mode == FbxLayerElement::eByPolygon)
+			{
+			
+				// add all indicies to the global material indices array, if not already there 
+				// we are looping over this thing three times, one per mat
+				if (std::find(allMaterialsAndTherIndicies[materialCount].begin(), allMaterialsAndTherIndicies[materialCount].end(), i) == allMaterialsAndTherIndicies[materialCount].end()) 
+				{
+					// Only add if not found
+					allMaterialsAndTherIndicies[materialCount].pushBack(i);
+				}
 
-			printf("size of vFixedVerts: %i \r\n", vFixedVerts->m_selectedVertices.getSize());
-			newSection->m_userChannels[0]=vFixedVerts;
-			exportedSections.pushBack(newSection);
-			vFixedVerts->removeReference();
-		} else {
 
-			// otherwise add a empty selection set
-			vFixedVerts->m_selectedVertices.setSize(0);
-			printf("size of vFixedVerts: %i \r\n", vFixedVerts->m_selectedVertices.getSize());
-			newSection->m_userChannels[0]=vFixedVerts;
-			exportedSections.pushBack(newSection);
-			vFixedVerts->removeReference();
+				// then add to it's specific material index, if not already there
+				if (indexArray[i] == curMat) 
+				{
+					if (std::find(allMaterialsAndTherIndicies[curMat].begin(), allMaterialsAndTherIndicies[curMat].end(), i) == allMaterialsAndTherIndicies[curMat].end()) {
+						allMaterialsAndTherIndicies[curMat].pushBack(i);
+					}
+				}
+			
+			}
+			else
+			{
+				HK_WARN(0x0, "Unsupported material mapping mode. This material will be ignored.");
+				continue;
+			}
+			
 		}
-
-		if (sectMat)
-		{
-			sectMat->removeReference();
-		}
-		newVB->removeReference();
-		newIB->removeReference();
 	}
+	printf("Size of material indicies: %i \r\n", allMaterialsAndTherIndicies[materialCount].getSize());
+
+
+	hkxMaterial* sectMat = HK_NULL;
+	if (m_options.m_exportMaterials)
+	{
+		//sectMat = createMaterial(matIds[curMat], triMesh, scene);
+		sectMat = createMaterial(matIds[0], triMesh, scene);
+	}
+		
+
+	// Vertex buffer
+	hkxVertexBuffer* newVB = new hkxVertexBuffer();
+	hkxIndexBuffer* newIB = new hkxIndexBuffer();
+	//fillBuffers(triMesh, meshNode, newVB, newIB, skinControlPointWeights, skinIndicesToClusters, materialIndices); //allMaterialsAndTherIndicies[materialCount]
+	fillBuffers(triMesh, meshNode, newVB, newIB, skinControlPointWeights, skinIndicesToClusters, allMaterialsAndTherIndicies[materialCount]);
+
+	hkxMeshSection* newSection = new hkxMeshSection();
+	newSection->m_material = sectMat;
+	newSection->m_vertexBuffer = newVB;
+	newSection->m_indexBuffers.setSize(1);
+	newSection->m_indexBuffers[0] = newIB;
+	newSection->m_userChannels.setSize(materialCount); //Just one per material, not the one extra for all 
+		
+	printf("Number of triangles in indexBuffer: %i \r\n", newIB->getNumTriangles());
+	printf("Number of vertices in indexBuffer: %i \r\n",newIB->getNumTriangles()*3);
+	printf("size of vertex buffer: %i \r\n",newVB->getNumVertices());
+
+
+	//Create a vector with hkxVertexSelectionChannel pointers, one for each material in the mesh
+	hkArray<hkxVertexSelectionChannel*> arrSelChannel; //one for each mat
+	arrSelChannel.setSize(materialCount);
+	for (int i = 0; i<materialCount; i++)
+	{
+		//init the vectors
+		arrSelChannel[i] = new hkxVertexSelectionChannel();
+	}
+
+	FbxVector4* lControlPoints = triMesh->GetControlPoints();
+	FbxVector2 fbxUV;
+	const int maxNumUVs = (int) hkxMaterial::PROPERTY_MTL_UV_ID_STAGE_MAX - (int) hkxMaterial::PROPERTY_MTL_UV_ID_STAGE0;
+
+	FbxStringList lUVSetNameList;
+	triMesh->GetUVSetNames(lUVSetNameList);
+	int lTextureUVIndex;
+
+	// I dunno if we should loop over UVs, seem shaky to deal with multiple UV meshes...
+	for(int t = 0, numUVs = hkMath::min2(lUVSetNameList.GetCount(), maxNumUVs); t < numUVs; ++t)
+	{
+		const char* lUVSetName = lUVSetNameList.GetStringAt(t);
+		const FbxGeometryElementUV* leUV = triMesh->GetElementUV(lUVSetName);
+
+		//total polygons of mesh is at index materialCount
+		const int lPolygonCount = allMaterialsAndTherIndicies[materialCount].getSize();
+		for (int polyIdx = 0; polyIdx < lPolygonCount; polyIdx++)
+		{
+
+			// Indirection from the ALL polygons in mesh index vector to the mesh's polygon list.
+			int i = allMaterialsAndTherIndicies[materialCount][polyIdx];
+
+			// for each vertex in these polygons
+			for (int j = 0; j < 3; j++)
+			{
+				
+				// get the control point
+				const int lControlPointIndex = triMesh->GetPolygonVertex(i, j);
+
+				//check which material this polygon belongs to (0...Materialcount) using the index array
+				int matIndexOfPolygon = indexArray[polyIdx];
+
+				switch (leUV->GetMappingMode()) // check its uv mapping mode
+				{
+				case FbxGeometryElement::eByPolygonVertex:
+					// UV indices, these are monotonously increasing with each vertex in each polygon.
+					lTextureUVIndex = i * 3 + j; // All polygons have 3 vertices.
+
+					// check it's not already added 
+					if (std::find(arrSelChannel[matIndexOfPolygon]->m_selectedVertices.begin(), arrSelChannel[matIndexOfPolygon]->m_selectedVertices.end(), lTextureUVIndex) == arrSelChannel[matIndexOfPolygon]->m_selectedVertices.end()) {
+						// polygon lTextureUVIndex is not in already in this materials hkxVertexSelectionSet
+						arrSelChannel[matIndexOfPolygon]->m_selectedVertices.pushBack(lTextureUVIndex);
+					}
+					break;
+				case FbxGeometryElement::eByControlPoint:
+					//using control points, just check it's not already added 
+					if (std::find(arrSelChannel[matIndexOfPolygon]->m_selectedVertices.begin(), arrSelChannel[matIndexOfPolygon]->m_selectedVertices.end(), lControlPointIndex) == arrSelChannel[matIndexOfPolygon]->m_selectedVertices.end()) {
+						// polygon lControlPointIndex is not in already in this materials hkxVertexSelectionSet
+						arrSelChannel[matIndexOfPolygon]->m_selectedVertices.pushBack(lControlPointIndex);
+					}
+					break;
+
+				case FbxGeometryElement::eByPolygon: // Doesn't make much sense for UVs
+				case FbxGeometryElement::eAllSame:   // Doesn't make much sense for UVs
+				case FbxGeometryElement::eNone:       // Doesn't make much sense for UVs
+					break;
+				}
+			}
+		}
+	}
+
+	//loop over materials and add the userchannels
+	for (int nMats=0; nMats<materialCount;nMats++)
+	{
+		printf("size of userchannel vertexindex vector: %i \r\n", arrSelChannel[nMats]->m_selectedVertices.getSize());
+		newSection->m_userChannels[nMats] = arrSelChannel[nMats];
+	}
+
+	exportedSections.pushBack(newSection);
+
+	if (sectMat)
+	{
+		sectMat->removeReference();
+	}
+	newVB->removeReference();
+	newIB->removeReference();
+	
 
 
 	// Create new mesh
 	newMesh = new hkxMesh();
+	printf("mesh sections in mesh: %i\r\n", exportedSections.getSize());
 	newMesh->m_sections.setSize(exportedSections.getSize()); 
 			
 
@@ -546,28 +514,22 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		}
 	}
 
-	
-	//add hkxMesh::UserChannelInfo 
-	hkxMesh::UserChannelInfo* newUCI = new hkxMesh::UserChannelInfo();
-	newUCI->m_name="fixedVerts";
-	newUCI->m_className="hkxVertexSelectionChannel";
+	for (int curMat = 0; curMat < materialCount; curMat++)
+	{
+		// Add a hkxMesh::UserChannelInfo for each material index vector we created earlier, in the same order
+		hkxMesh::UserChannelInfo* newUCI = new hkxMesh::UserChannelInfo();
+		newUCI->m_name = matIds[curMat]->GetName();
+		newUCI->m_className="hkxVertexSelectionChannel";
+		newMesh->m_userChannelInfos.pushBack(newUCI);
+		newUCI->removeReference();
 
-	//newMesh->m_userChannelInfos.setSize(2);
-	//newMesh->m_userChannelInfos[1] = newMesh->m_userChannelInfos[0]; // put fixed Verts in slot 2
-	//newMesh->m_userChannelInfos[0] = newUCI;
-	newMesh->m_userChannelInfos.pushBack(newUCI);
-	newUCI->removeReference();
+	}
 
 	if (m_options.m_exportVertexTangents)
 	{
 		printf("Computing tangents...\r\n");
-		hkxMeshSectionUtil::computeTangents(newMesh, true, originalMesh->GetName());
+		hkxMeshSectionUtil::computeTangents(newMesh, false, originalMesh->GetName());
 	}
-
-	printf("size of meshsection 0 userchannels: %i\r\n",newMesh->m_sections[0]->m_userChannels.getSize());
-	printf("size of meshsection 1 userchannels: %i\r\n",newMesh->m_sections[1]->m_userChannels.getSize());
-	printf("size of mesh userchannelinfo: %i\r\n",newMesh->m_userChannelInfos.getSize());
-
 
 	printf("Mesh processing done\r\n");
 	if (newMesh)
