@@ -114,8 +114,21 @@ int main(int argc, char* argv[])
 		fbxImporter->Destroy();
 
 		// Currently assume that the file is loaded from 3dsmax
+		// According to https://www.soft8soft.com/wiki/index.php/Coordinate_Systems#Blender
+		// blender and 3dsmax uses the same z up coordinate system
+		
+		/*
+		FbxAxisSystem BlenderAxisSys;
+		bool createBlenderAxisSys = false;
+		createBlenderAxisSys = FbxAxisSystem::ParseAxisSystem("xzy", BlenderAxisSys);
+		if (createBlenderAxisSys) {
+			printf("created blender axis system\r\n");
+		}
+		BlenderAxisSys.ConvertScene(fbxScene);
+		*/
+		//FbxAxisSystem::MayaYUp.ConvertScene(fbxScene);
 		FbxAxisSystem::Max.ConvertScene(fbxScene);
-
+		
 		FbxToHkxConverter::Options options(fbxSdkManager);
 		FbxToHkxConverter converter(options);
 

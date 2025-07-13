@@ -290,6 +290,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 			// Our dummy material needed for the mesh section has no matching counterpart on the fbx side.
 			matIds.pushBack(NULL);
 		}
+		printf("WARNING: Mesh with no material/material mapping, might crash...\r\n");
 	}
 	
 	// Create subsection for each material
@@ -311,22 +312,24 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 
 			if (mode == FbxLayerElement::eAllSame)
 			{
+				//printf("Mat used for all triangles\r\n");
 				// The material is used for all triangles. To be able to use the same code in this case
 				// we just write all indices into the array.
 				// The last entry in the array (at materialCount) contains all vertices
 				const int polygonCount = triMesh->GetPolygonCount();
 				for (int polygonIndex = 0; polygonIndex < polygonCount; ++polygonIndex)
 				{
-					if (std::find(allMaterialsAndTherIndicies[materialCount].begin(), allMaterialsAndTherIndicies[materialCount].end(), i) == allMaterialsAndTherIndicies[materialCount].end()) 
-					{
+					//if (std::find(allMaterialsAndTherIndicies[materialCount].begin(), allMaterialsAndTherIndicies[materialCount].end(), i) == allMaterialsAndTherIndicies[materialCount].end()) 
+					//{
 						// Only add if not found
-						allMaterialsAndTherIndicies[materialCount].pushBack(polygonIndex);
-					}
+					//	allMaterialsAndTherIndicies[materialCount].pushBack(polygonIndex);
+					//}
+					allMaterialsAndTherIndicies[materialCount].pushBack(polygonIndex);
 				}
 			}
 			else if (mode == FbxLayerElement::eByPolygon)
 			{
-			
+				//printf("Variable material use\r\n");
 				// add all indicies to the global material indices array, if not already there 
 				// we are looping over this thing three times, one per mat
 				if (std::find(allMaterialsAndTherIndicies[materialCount].begin(), allMaterialsAndTherIndicies[materialCount].end(), i) == allMaterialsAndTherIndicies[materialCount].end()) 
@@ -472,7 +475,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 
 	// Create new mesh
 	newMesh = new hkxMesh();
-	printf("mesh sections in mesh: %i\r\n", exportedSections.getSize());
+	printf("mesh sections in mesh: %i \r\n", exportedSections.getSize());
 	newMesh->m_sections.setSize(exportedSections.getSize()); 
 			
 
@@ -502,8 +505,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 			FbxCluster* lCluster = skin->GetCluster(curClusterIndex);
 
 			newSkin->m_nodeNames[curClusterIndex] = lCluster->GetLink()->GetName();
-
-			const FbxAMatrix lMatrix = getGlobalPosition(lCluster->GetLink(), m_startTime, m_pose, NULL);			
+			const FbxAMatrix lMatrix = getGlobalPosition(lCluster->GetLink(), m_startTime, m_pose, NULL);
 			convertFbxXMatrixToMatrix4(lMatrix, newSkin->m_bindPose[curClusterIndex]);
 		}
 
@@ -528,7 +530,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	if (m_options.m_exportVertexTangents)
 	{
 		printf("Computing tangents...\r\n");
-		hkxMeshSectionUtil::computeTangents(newMesh, false, originalMesh->GetName());
+		hkxMeshSectionUtil::computeTangents(newMesh, true, originalMesh->GetName());
 	}
 
 	printf("Mesh processing done\r\n");

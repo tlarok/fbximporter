@@ -167,6 +167,7 @@ bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
 	m_numBones = boneNodes.getSize();
 	printf("Bones: %d\n", m_numBones);
 
+	
 	const int poseCount = m_curFbxScene->GetPoseCount();
 	if (poseCount > 0)
 	{
@@ -285,6 +286,8 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 		FbxNodeAttribute* fbxNodeAtttrib = fbxChildNode->GetNodeAttribute();
 		bool selected = fbxChildNode->GetSelected();
 
+		//printf("processing node %s, selected: %s, visible: %s\r\n", fbxChildNode->GetName(), selected ? "true" : "false",  fbxNode->GetVisibility() ? "true" : "false");
+
 		// Ignore nodes(and their descendants) if they're invisible and we ignore invisible objects
 		if ( !(!m_options.m_visibleOnly || fbxNode->GetVisibility()) )
 			continue;
@@ -359,6 +362,50 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 		{
 			addSampledNodeAttributeGroups(scene, animStackIndex, fbxChildNode, newChildNode);
 		}
+
+		// check here if node name starts with collision_
+		// if thats the case, first add a hkxAttributeGroup to this node called hkClothCollidable, with two hkxAttribute children; collidableShapeType and heightfieldResolution
+		if (strncmp(newChildNode->m_name.cString(), "collision_", 10) == 0) {
+			printf("Adding collision hkxAttributeGroup to %s\r\n",newChildNode->m_name.cString());
+			// Create hkxAttributeGroup named "hkClothCollidable"
+			hkxAttributeGroup* clothCollidable = new hkxAttributeGroup();
+			clothCollidable->m_name = "hkClothCollidable";
+        
+			// Create first attribute "collidableShapeType"
+			hkxAttribute* shapeTypeAttr = new hkxAttribute();
+			shapeTypeAttr->m_name = "collidableShapeType";
+
+			// Set value as needed (sphere, capsule, etc.)
+			hkxSparselyAnimatedString* animatedStringData = new hkxSparselyAnimatedString();
+			shapeTypeAttr->m_value = animatedStringData;
+			//     { ST_SPHERE,"Sphere" },
+			//     { ST_PLANE,"Plane" },
+			//     { ST_CAPSULE,"Capsule" },
+			//     { ST_CONVEX_GEOMETRY,"Convex Geometry" },
+			//     { ST_CONVEX_HEIGHTFIELD,"Convex Heightfield" },
+			animatedStringData->m_strings.expandOne() = "Capsule";
+			animatedStringData->m_times.expandOne() = 0.f; // not size
+			animatedStringData->removeReference();
+
+			// Create second attribute "heightfieldResolution"
+			hkxAttribute* resolutionAttr = new hkxAttribute();
+			resolutionAttr->m_name = "heightfieldResolution";
+			// Set value as needed
+			hkxSparselyAnimatedInt* animatedData = new hkxSparselyAnimatedInt();
+			animatedData->m_ints.expandOne() = (hkInt32) 128; // maybe we can up this at cost of performance? can't edit in 3dsmax exporter
+			animatedData->m_times.expandOne() = 0.f; // not size
+			animatedData->removeReference();
+        
+			// Add attributes to the group
+			clothCollidable->m_attributes.pushBack(*shapeTypeAttr);
+			clothCollidable->m_attributes.pushBack(*resolutionAttr);
+        
+			// Add the group to the node
+			newChildNode->m_attributeGroups.expandBy(1);
+			newChildNode->m_attributeGroups.pushBack(*clothCollidable);
+			printf("Done adding collision to %s\r\n",newChildNode->m_name.cString());
+		}
+		// done with collision shenanigans
 
 		GetCustomVisionData(fbxChildNode, newChildNode->m_userProperties);
 
@@ -532,12 +579,24 @@ void FbxToHkxConverter::extractKeyFramesAndAnnotations(hkxScene *scene, FbxNode*
 
 void FbxToHkxConverter::findChildren(FbxNode* root, hkArray<FbxNode*>& children, FbxNodeAttribute::EType type)
 {
+	FbxMatrix tmpMatrix;
 	for (int childIndex = 0; childIndex < root->GetChildCount(); childIndex++)
 	{
 		FbxNode *node = root->GetChild(childIndex);
 		if (node->GetNodeAttribute() != NULL &&
 			node->GetNodeAttribute()->GetAttributeType() == type)
 		{
+			// some debug stuff for bones
+			if (node->GetNodeAttribute()->GetAttributeType() == FbxNodeAttribute::eSkeleton)
+			{
+				//printf("found bonenode\r\n");
+				tmpMatrix = node->EvaluateGlobalTransform();
+				if (tmpMatrix.GetColumn(3)[3] != 1.0f)
+				{
+					printf("nonzero scale on %s\r\n", node->GetName());
+					printf("(%f, %f, %f, %f)\r\n", tmpMatrix.GetColumn(3)[0], tmpMatrix.GetColumn(3)[1], tmpMatrix.GetColumn(3)[2], tmpMatrix.GetColumn(3)[3]);
+				}
+			}
 			children.pushBack(node);
 		}
 
