@@ -17,9 +17,10 @@
 #include <vector>
 #include <string>
 #include <sstream>
-#include <Windows.h>
+#include <windows.h>
 #include <string>
-#include <cctype>
+#include <vector>
+#include <stdio.h>
 
 template <class T>
 void convertPropertyToVector4(const FbxPropertyT<T> &property, hkVector4 &vec, float z = 0.0f)
@@ -204,11 +205,6 @@ static hkxMaterial* createDefaultMaterial(const char* name)
 	return mat;
 }
 
-#include <windows.h>
-#include <string>
-#include <vector>
-#include <stdio.h> // for printf
-
 std::vector<std::string> getSelectionFilesForMesh(const std::string& folderPath, const std::string& meshName)
 {
     std::vector<std::string> result;
@@ -267,6 +263,11 @@ std::vector<int> adducindex(const std::string& fullFilePath)
 
     std::string line;
     while (std::getline(file, line)) {
+
+		if (line == "# UV Indices per selected vertex") {
+			continue;  // Skip header line
+		}
+
         std::istringstream iss(line);
         std::string token;
 
@@ -291,18 +292,33 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 {
 	const char* meshName = meshNode->GetName();
 	std::vector<std::string> fileNames = getSelectionFilesForMesh(path, meshName);
-	std::string basePath = path;
-    if (!basePath.empty() && basePath.back() != '\\' && basePath.back() != '/')
-        basePath += '\\';
-    basePath += "export_data\\";
+	std::vector<std::vector<int>> hkxSelectionGroups;
+	std::vector<std::string> hkxSelectionNames;
 
-	for (size_t i = 0; i < fileNames.size(); ++i)
-    {
-        std::string fullPath = basePath + fileNames[i];
-        std::vector<int> selectGroup = adducindex(fullPath);
+	// Only add stuff to the hkxselection groups if there were any files
+	if (!fileNames.empty()) {
+		std::string basePath = path;
+		if (!basePath.empty() && basePath.back() != '\\' && basePath.back() != '/') {
+			basePath += '\\';
+		}
+		basePath += "export_data\\";
 
-        printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
-    }
+		for (size_t i = 0; i < fileNames.size(); ++i) {
+			std::string fullPath = basePath + fileNames[i];
+			std::vector<int> selectGroup = adducindex(fullPath);
+
+			printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
+        
+			// Store the selection group and its name
+			hkxSelectionGroups.push_back(selectGroup);
+			hkxSelectionNames.push_back(fileNames[i]);
+		}
+	}
+
+	int n_hkxvertexselectionsets = hkxSelectionGroups.size();
+
+	printf("Done adding hkxSelectionGroups\r\n");
+
 
 	FbxMesh* originalMesh = meshNode->GetMesh();
 	FbxMesh* triMesh = NULL;
@@ -456,6 +472,29 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		newSection->m_vertexBuffer = newVB;
 		newSection->m_indexBuffers.setSize(1);
 		newSection->m_indexBuffers[0] = newIB;
+
+
+		// *************************************ADDING HKXVERTEXSELECTIONSETS HERE*************************************
+		// Loop over all extra vertex groups and add hkxVertexSelectionSets for them here
+		// should probably be under the material parsing section though, this banks on there being just one hkxmeshsection...
+		// hkxSelectionNames
+		printf("Creating hkxVertexSelectionSets...\r\n");
+		hkArray<hkxVertexSelectionChannel*> arrSelChannel;
+		arrSelChannel.setSize(n_hkxvertexselectionsets);
+		int curUserChannelSize = newSection->m_userChannels.getSize();
+		newSection->m_userChannels.setSize(curUserChannelSize + n_hkxvertexselectionsets);
+		for (int i = 0; i<n_hkxvertexselectionsets; i++)
+		{
+			//init the vectors
+			arrSelChannel[i] = new hkxVertexSelectionChannel();
+			for (int hkxSelectionGroupidx = 0; hkxSelectionGroupidx < hkxSelectionGroups[i].size(); hkxSelectionGroupidx++)
+			{
+				arrSelChannel[i]->m_selectedVertices.pushBack(hkxSelectionGroups[i][hkxSelectionGroupidx]);
+			}
+			newSection->m_userChannels[curUserChannelSize+i] = arrSelChannel[i];
+		}
+		// *************************************DONE ADDING HKXVERTEXSELECTIONSETS*************************************
+
 		exportedSections.pushBack(newSection);
 
 		if (sectMat)
@@ -504,10 +543,25 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		}
 	}
 
+	// Loop over all extra vertex groups and add userinfochannels for them
+	// hkxSelectionNames
+
+	for (int curhkxSelectionSet = 0; curhkxSelectionSet < hkxSelectionNames.size(); curhkxSelectionSet++)
+	{
+		// Add a hkxMesh::UserChannelInfo for each hkxertexselection set we created earlier, in the same order
+		hkxMesh::UserChannelInfo* newUCI = new hkxMesh::UserChannelInfo();
+		newUCI->m_name = hkxSelectionNames[curhkxSelectionSet].c_str();
+		newUCI->m_className="hkxVertexSelectionChannel";
+		newMesh->m_userChannelInfos.pushBack(newUCI);
+		newUCI->removeReference();
+
+	}
+
 	if (m_options.m_exportVertexTangents)
 	{
 		hkxMeshSectionUtil::computeTangents(newMesh, true, originalMesh->GetName());
 	}
+
 
 	if (newMesh)
 	{
