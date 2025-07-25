@@ -77,8 +77,6 @@ void FbxToHkxConverter::clear()
 
 void FbxToHkxConverter::saveScenes(const char* path, const char* name)
 {
-	printf("Output path: %s\n", path);
-
 	for (int sceneIndex = 0; sceneIndex < m_scenes.getSize(); sceneIndex++)
 	{
 		hkxScene *scene = m_scenes[sceneIndex];
@@ -135,7 +133,7 @@ void FbxToHkxConverter::saveScenes(const char* path, const char* name)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter/hctMaxSceneExporter::createScene()
-bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
+bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes, const char* path)
 {
 	clear();
 
@@ -189,24 +187,24 @@ bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
 		if (m_numAnimStacks > 0)
 		{
 			printf("'-noTakes' option set, only exporting first animation.\n");
-			createSceneStack(0);
+			createSceneStack(0, path);
 		}
 		else
 		{
 			printf("'-noTakes' option set and no animation present, only exporting static geometry.\n");
-			createSceneStack(-1);
+			createSceneStack(-1, path);
 		}
 	}
 	else
 	{
 		printf("Animation stacks: %d\n", m_numAnimStacks);
-		createSceneStack(-1);
+		createSceneStack(-1, path);
 
 		for (int animStackIndex = 0;
 			animStackIndex < m_numAnimStacks && m_numBones > 0;
 			animStackIndex++)
 		{
-			createSceneStack(animStackIndex);
+			createSceneStack(animStackIndex, path);
 		}
 	}
 
@@ -214,7 +212,7 @@ bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter/hctMaxSceneExporter::createScene()
-bool FbxToHkxConverter::createSceneStack(int animStackIndex)
+bool FbxToHkxConverter::createSceneStack(int animStackIndex, const char* path)
 {
 	hkxScene *scene = new hkxScene;
 
@@ -269,7 +267,7 @@ bool FbxToHkxConverter::createSceneStack(int animStackIndex)
 		// Setup (identity) keyframes(s) for the 'static' root node
 		rootNode->m_keyFrames.setSize( scene->m_numFrames > 1 ? 2 : 1, hkMatrix4::getIdentity() );
 
-		addNodesRecursive(scene, m_rootNode, scene->m_rootNode, currentAnimStackIndex);
+		addNodesRecursive(scene, m_rootNode, scene->m_rootNode, currentAnimStackIndex, path);
 	}
 
 	m_scenes.pushBack(scene);
@@ -278,7 +276,7 @@ bool FbxToHkxConverter::createSceneStack(int animStackIndex)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter::createHkxNodes()
-void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex)
+void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex, const char* path)
 {
 	for (int childIndex = 0; childIndex < fbxNode->GetChildCount(); childIndex++)
 	{
@@ -314,7 +312,7 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 					// Generate hkxMesh and all its dependent data (ie: hkxSkinBinding, hkxMeshSection, hkxMaterial)
 					if (m_options.m_exportMeshes)
 					{
-						addMesh(scene, fbxChildNode, newChildNode);
+						addMesh(scene, fbxChildNode, newChildNode, path);
 					}
 					break;
 				}
