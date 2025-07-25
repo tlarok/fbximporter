@@ -131,32 +131,34 @@ int main(int argc, char* argv[])
 		
 		FbxToHkxConverter::Options options(fbxSdkManager);
 		FbxToHkxConverter converter(options);
-
-		if(converter.createScenes(fbxScene, noTakes))
+		
+		hkStringBuf path;
+		hkStringBuf name;
+		// Was an output filename provided?
+		if (outputFile != NULL)
 		{
-			hkStringBuf path;
-			hkStringBuf name;
-			// Was an output filename provided?
-			if (outputFile != NULL)
-			{
-				path = outputFile;
-				path.pathNormalize();
-				name = path;
-				path.pathDirname();
-				name.pathBasename();
-			}
-			else
-			{
-				path = filename;
-				path.pathDirname();
-				name = filename;
-				name.pathBasename();
-			}
+			path = outputFile;
+			path.pathNormalize();
+			name = path;
+			path.pathDirname();
+			name.pathBasename();
+		}
+		else
+		{
+			path = filename;
+			path.pathDirname();
+			name = filename;
+			name.pathBasename();
+		}
+
+		if(converter.createScenes(fbxScene, noTakes, path))
+		{
 			
 			int extensionIndex = hkString::lastIndexOf(name, '.');
 			if (extensionIndex >= 0)
 				name.slice(0, extensionIndex);
-
+			
+			converter.save_path(path);
 			converter.saveScenes(path, name);
 		}
 		else
