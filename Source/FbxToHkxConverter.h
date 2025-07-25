@@ -47,8 +47,18 @@ public:
 	FbxToHkxConverter(const Options& options);
 	~FbxToHkxConverter();
 	
-	bool createScenes(FbxScene* fbxScene, bool noTakes);
+	bool createScenes(FbxScene* fbxScene, bool noTakes, const char* path);
 	void saveScenes(const char *path, const char *name);
+
+	void FbxToHkxConverter::save_path(const char* path)
+	{
+		m_inputFilePath = path;   // hkStringBuf supports assignment from const char*
+	}
+	hkStringBuf give_path(){
+		return m_inputFilePath;
+	}
+
+	hkStringBuf m_inputFilePath;
 
 private:
 
@@ -71,6 +81,7 @@ private:
 
 		matrix.setCols(c0,c1,c2,c3);
 	}
+
 
 	static void fillBuffers(
 		FbxMesh* pMesh,
@@ -95,9 +106,9 @@ private:
 
 	void clear();
 
-	bool createSceneStack(int animStackIndex);
-	void addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex);	
-	void addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node);
+	bool createSceneStack(int animStackIndex, const char* path = NULL);
+	void addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex, const char* path = NULL);	
+	void addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node, const char* path = NULL);
 	void addCamera(hkxScene *scene, FbxNode* cameraNode, hkxNode* node);
 	void addLight(hkxScene *scene, FbxNode* lightNode, hkxNode* node);
 	void addSpline(hkxScene *scene, FbxNode* splineNode, hkxNode* node);
