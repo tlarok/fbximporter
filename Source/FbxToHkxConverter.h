@@ -49,17 +49,6 @@ public:
 	
 	bool createScenes(FbxScene* fbxScene, bool noTakes, const char* path);
 	void saveScenes(const char *path, const char *name);
-
-	void FbxToHkxConverter::save_path(const char* path)
-	{
-		m_inputFilePath = path;   // hkStringBuf supports assignment from const char*
-	}
-	hkStringBuf give_path(){
-		return m_inputFilePath;
-	}
-
-	hkStringBuf m_inputFilePath;
-
 private:
 
 	//---- static declarations
