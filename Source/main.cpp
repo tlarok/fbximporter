@@ -158,7 +158,6 @@ int main(int argc, char* argv[])
 			if (extensionIndex >= 0)
 				name.slice(0, extensionIndex);
 			
-			converter.save_path(path);
 			converter.saveScenes(path, name);
 		}
 		else
