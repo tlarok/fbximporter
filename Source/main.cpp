@@ -151,6 +151,8 @@ int main(int argc, char* argv[])
 			name.pathBasename();
 		}
 
+
+		printf("working directory ('path'): %s\r\n", path);
 		if(converter.createScenes(fbxScene, noTakes, path))
 		{
 			
