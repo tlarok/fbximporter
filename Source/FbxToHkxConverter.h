@@ -47,7 +47,7 @@ public:
 	FbxToHkxConverter(const Options& options);
 	~FbxToHkxConverter();
 	
-	bool createScenes(FbxScene* fbxScene, bool noTakes);
+	bool createScenes(FbxScene* fbxScene, bool noTakes, const char* hkxVertexSelection_path);
 	void saveScenes(const char *path, const char *name);
 
 private:
@@ -95,9 +95,9 @@ private:
 
 	void clear();
 
-	bool createSceneStack(int animStackIndex);
-	void addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex);	
-	void addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node);
+	bool createSceneStack(int animStackIndex, const char* hkxVertexSelection_path);
+	void addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex, const char* hkxVertexSelection_path);	
+	void addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node, const char* hkxVertexSelection_path);
 	void addCamera(hkxScene *scene, FbxNode* cameraNode, hkxNode* node);
 	void addLight(hkxScene *scene, FbxNode* lightNode, hkxNode* node);
 	void addSpline(hkxScene *scene, FbxNode* splineNode, hkxNode* node);

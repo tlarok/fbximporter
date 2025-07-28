@@ -135,7 +135,7 @@ void FbxToHkxConverter::saveScenes(const char* path, const char* name)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter/hctMaxSceneExporter::createScene()
-bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
+bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes, const char* hkxVertexSelection_path)
 {
 	clear();
 
@@ -189,24 +189,24 @@ bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
 		if (m_numAnimStacks > 0)
 		{
 			printf("'-noTakes' option set, only exporting first animation.\n");
-			createSceneStack(0);
+			createSceneStack(0, hkxVertexSelection_path);
 		}
 		else
 		{
 			printf("'-noTakes' option set and no animation present, only exporting static geometry.\n");
-			createSceneStack(-1);
+			createSceneStack(-1, hkxVertexSelection_path);
 		}
 	}
 	else
 	{
 		printf("Animation stacks: %d\n", m_numAnimStacks);
-		createSceneStack(-1);
+		createSceneStack(-1, hkxVertexSelection_path);
 
 		for (int animStackIndex = 0;
 			animStackIndex < m_numAnimStacks && m_numBones > 0;
 			animStackIndex++)
 		{
-			createSceneStack(animStackIndex);
+			createSceneStack(animStackIndex, hkxVertexSelection_path);
 		}
 	}
 
@@ -214,7 +214,7 @@ bool FbxToHkxConverter::createScenes(FbxScene* fbxScene, bool noTakes)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter/hctMaxSceneExporter::createScene()
-bool FbxToHkxConverter::createSceneStack(int animStackIndex)
+bool FbxToHkxConverter::createSceneStack(int animStackIndex, const char* hkxVertexSelection_path)
 {
 	hkxScene *scene = new hkxScene;
 
@@ -269,7 +269,7 @@ bool FbxToHkxConverter::createSceneStack(int animStackIndex)
 		// Setup (identity) keyframes(s) for the 'static' root node
 		rootNode->m_keyFrames.setSize( scene->m_numFrames > 1 ? 2 : 1, hkMatrix4::getIdentity() );
 
-		addNodesRecursive(scene, m_rootNode, scene->m_rootNode, currentAnimStackIndex);
+		addNodesRecursive(scene, m_rootNode, scene->m_rootNode, currentAnimStackIndex, hkxVertexSelection_path);
 	}
 
 	m_scenes.pushBack(scene);
@@ -278,7 +278,7 @@ bool FbxToHkxConverter::createSceneStack(int animStackIndex)
 }
 
 // This method is templated on the implementation of hctMayaSceneExporter::createHkxNodes()
-void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex)
+void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkxNode* node, int animStackIndex, const char* hkxVertexSelection_path)
 {
 	for (int childIndex = 0; childIndex < fbxNode->GetChildCount(); childIndex++)
 	{
@@ -314,7 +314,7 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 					// Generate hkxMesh and all its dependent data (ie: hkxSkinBinding, hkxMeshSection, hkxMaterial)
 					if (m_options.m_exportMeshes)
 					{
-						addMesh(scene, fbxChildNode, newChildNode);
+						addMesh(scene, fbxChildNode, newChildNode, hkxVertexSelection_path);
 					}
 					break;
 				}
@@ -366,24 +366,43 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 		// check here if node name starts with collision_
 		// if thats the case, first add a hkxAttributeGroup to this node called hkClothCollidable, with two hkxAttribute children; collidableShapeType and heightfieldResolution
 		if (strncmp(newChildNode->m_name.cString(), "collision_", 10) == 0) {
-			printf("Adding collision hkxAttributeGroup to %s\r\n",newChildNode->m_name.cString());
+			printf("Adding collision hkxAttributeGroup to %s\n", newChildNode->m_name.cString());
+    
 			// Create hkxAttributeGroup named "hkClothCollidable"
 			hkxAttributeGroup* clothCollidable = new hkxAttributeGroup();
 			clothCollidable->m_name = "hkClothCollidable";
-        
+    
 			// Create first attribute "collidableShapeType"
 			hkxAttribute* shapeTypeAttr = new hkxAttribute();
 			shapeTypeAttr->m_name = "collidableShapeType";
-
-			// Set value as needed (sphere, capsule, etc.)
+    
+			// Set value based on collision type
 			hkxSparselyAnimatedString* animatedStringData = new hkxSparselyAnimatedString();
 			shapeTypeAttr->m_value = animatedStringData;
-			//     { ST_SPHERE,"Sphere" },
-			//     { ST_PLANE,"Plane" },
-			//     { ST_CAPSULE,"Capsule" },
-			//     { ST_CONVEX_GEOMETRY,"Convex Geometry" },
-			//     { ST_CONVEX_HEIGHTFIELD,"Convex Heightfield" },
-			animatedStringData->m_strings.expandOne() = "Capsule";
+    
+			const char* nodeName = newChildNode->m_name.cString();
+			bool recognizedType = true;
+
+			if (strncmp(nodeName, "collision_sphere", 16) == 0) {
+				animatedStringData->m_strings.expandOne() = "Sphere";
+			}
+			else if (strncmp(nodeName, "collision_plane", 15) == 0) {
+				animatedStringData->m_strings.expandOne() = "Plane";
+			}
+			else if (strncmp(nodeName, "collision_capsule", 17) == 0) {
+				animatedStringData->m_strings.expandOne() = "Capsule";
+			}
+			else if (strncmp(nodeName, "collision_convexgeom", 20) == 0) {
+				animatedStringData->m_strings.expandOne() = "Convex Geometry";
+			}
+			else if (strncmp(nodeName, "collision_convexheight", 22) == 0) {
+				animatedStringData->m_strings.expandOne() = "Convex Heightfield";
+			}
+			else {
+				// Default to "Capsule" but warn about unrecognized type
+				animatedStringData->m_strings.expandOne() = "Capsule";
+				printf("Warning: Unrecognized collision type in '%s' (defaulting to 'Capsule')\n", nodeName);
+			}
 			animatedStringData->m_times.expandOne() = 0.f; // not size
 			animatedStringData->removeReference();
 
@@ -409,7 +428,7 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 
 		GetCustomVisionData(fbxChildNode, newChildNode->m_userProperties);
 
-		addNodesRecursive(scene, fbxChildNode, newChildNode, animStackIndex);
+		addNodesRecursive(scene, fbxChildNode, newChildNode, animStackIndex, hkxVertexSelection_path);
 		newChildNode->removeReference();
 	}
 }

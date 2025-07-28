@@ -29,6 +29,8 @@
 
 #include "FbxToHkxConverter.h"
 
+#include <sys/stat.h> // for stat (check folder exist)
+
 static void HK_CALL havokErrorReport(const char* msg, void*)
 {
 	// Output to console
@@ -57,13 +59,15 @@ int main(int argc, char* argv[])
 	bool noTakes = false;
 	const char* inputFile = NULL;
 	const char* outputFile = NULL;
+	const char* exportDataFolder = NULL;
 	// Parse command line
 	hkOptionParser parser("FBXImporter", "Converts an fbx file into a havok tagfile (.hkt)");
 	{
 		hkOptionParser::Option options[] = 
 		{
 			hkOptionParser::Option("t", "noTakes", "if set, the first animation take is stored in input.hkt and additional takes are ignored.", &noTakes, false),
-			hkOptionParser::Option("o", "output", "the absolute path to the output filename. If left unspecified, the input filename is used instead with a changed extension.", &outputFile)
+			hkOptionParser::Option("o", "output", "the absolute path to the output filename. If left unspecified, the input filename is used instead with a changed extension.", &outputFile),
+			hkOptionParser::Option("d", "data", "absolute path to folder with mesh-related export data (for hkxVertexSelectionSets). If left unspecified, the input file path is used instead with a changed extension.", &exportDataFolder)
 		};
 
 		if (parser.setOptions(options, HK_COUNT_OF(options)))
@@ -76,7 +80,7 @@ int main(int argc, char* argv[])
 			}
 		}
 	}
-
+	
 	// Load FBX and save as HKX
 	{
 		hkStringBuf filename = inputFile;
@@ -100,7 +104,39 @@ int main(int argc, char* argv[])
 			fbxSdkManager->Destroy();
 			return -1;
 		}
+		printf("setting up export_data path... \r\n");
+		hkStringBuf hkxVertexSelection_path;
+		if (exportDataFolder != NULL)
+		{
+			//export data folder specified
+			hkxVertexSelection_path = exportDataFolder;
+			hkxVertexSelection_path.pathNormalize();
+			struct stat info;
+			if (stat(hkxVertexSelection_path.cString(), &info) != 0)
+			{
+				printf("Specified export folder \r\n");
+			}
+    
+			if (!(info.st_mode & S_IFDIR))
+			{
+				printf("-d specified but doesn't exist, or isn't a folder... \r\n");
+				HK_WARN(0x5216afed, "Failed to initialize mesh data path! Please ensure " << filename << " is a valid folder\n");
+				fbxSdkManager->Destroy();
+				return -1;
+			}
 
+		} else 
+		{
+			//NO export data folder specified
+			hkxVertexSelection_path = filename;
+			hkxVertexSelection_path.pathDirname();
+			// Check if the resulting path is empty (no directory component)
+			if (hkxVertexSelection_path[0] == '\0') {  // Explicit empty string check
+				hkxVertexSelection_path = ".";
+			}
+
+		}
+		printf("creating fbxsdk manager... \r\n");
 		FbxScene* fbxScene = FbxScene::Create(fbxSdkManager,"tempScene");
 		if (!fbxScene)
 		{
@@ -132,7 +168,7 @@ int main(int argc, char* argv[])
 		FbxToHkxConverter::Options options(fbxSdkManager);
 		FbxToHkxConverter converter(options);
 
-		if(converter.createScenes(fbxScene, noTakes))
+		if(converter.createScenes(fbxScene, noTakes, hkxVertexSelection_path))
 		{
 			hkStringBuf path;
 			hkStringBuf name;
