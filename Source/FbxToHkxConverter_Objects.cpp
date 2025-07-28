@@ -225,6 +225,7 @@ std::vector<std::string> getSelectionFilesForMesh(const std::string& folder, con
     if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
         searchPath += '\\';
     searchPath += meshName;
+	searchPath += "_";
 	searchPath += "*.txt";
 
     WIN32_FIND_DATAA findData;
@@ -320,7 +321,6 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	if (!strncmp(meshName, "collision_", 10) == 0)  // "collision_" is 10 chars long
 	{ 
 		fileNames = getSelectionFilesForMesh(hkxVertexSelection_path, meshName);
-
 		// Only add stuff to the hkxselection groups if there were any files
 		if (!fileNames.empty()) {
 			std::string basePath = hkxVertexSelection_path;
@@ -336,11 +336,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 				printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
 				
 				// <meshname>_groupname.txt = groupname
-				// <meshname>groupname1.txt = groupname1
-				size_t startPos = strlen(meshName);
-				if (startPos < fileNames[i].size() && fileNames[i][startPos] == '_') {
-					startPos++;
-				}
+				size_t startPos = strlen(meshName)+1;
 
 				size_t endPos = fileNames[i].rfind(".txt");
 				hkxSelectionName = fileNames[i].substr(startPos, endPos - startPos);
@@ -632,6 +628,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 			newUCI->removeReference();
 		}
 	}
+
 	if (m_options.m_exportVertexTangents)
 	{
 		hkxMeshSectionUtil::computeTangents(newMesh, true, originalMesh->GetName());
