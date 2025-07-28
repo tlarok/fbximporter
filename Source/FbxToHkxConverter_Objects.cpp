@@ -221,14 +221,11 @@ std::vector<std::string> getSelectionFilesForMesh(const std::string& folder, con
 		folderPath = folder;
 	}
     std::vector<std::string> result;
-    printf("Searching in folder: %s\n", folderPath.c_str());
-    printf("Looking for files starting with: %s_\n", meshName.c_str()); // Note the underscore
-
     std::string searchPath = folderPath + "/export_data";
     if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
         searchPath += '\\';
-    searchPath += "*.txt";
-    printf("Using search pattern: %s\n", searchPath.c_str());
+    searchPath += meshName;
+	searchPath += "*.txt";
 
     WIN32_FIND_DATAA findData;
     HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
@@ -244,12 +241,14 @@ std::vector<std::string> getSelectionFilesForMesh(const std::string& folder, con
         return result;
     }
 
+
+
     do
     {
         if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
         {
             std::string fileName = findData.cFileName;
-            printf("Found file: %s\n", fileName.c_str());
+            printf("Found file with extra mesh data: %s\n", fileName.c_str());
 			result.push_back(fileName);
 			/*
             // Create the expected prefix (meshName + underscore)
@@ -310,34 +309,51 @@ std::vector<int> adducindex(const std::string& fullFilePath)
 void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node, const char* hkxVertexSelection_path)
 {
 	const char* meshName = meshNode->GetName();
-	std::vector<std::string> fileNames = getSelectionFilesForMesh(hkxVertexSelection_path, meshName);
+	printf("Processing mesh %s\r\n", meshName);
+	
+	int n_hkxvertexselectionsets;
+	std::vector<std::string> fileNames;
 	std::vector<std::vector<int>> hkxSelectionGroups;
 	std::vector<std::string> hkxSelectionNames;
+	std::string hkxSelectionName;
 
-	// Only add stuff to the hkxselection groups if there were any files
-	if (!fileNames.empty()) {
-		std::string basePath = hkxVertexSelection_path;
-		if (!basePath.empty() && basePath.back() != '\\' && basePath.back() != '/') {
-			basePath += '\\';
+	if (!strncmp(meshName, "collision_", 10) == 0)  // "collision_" is 10 chars long
+	{ 
+		fileNames = getSelectionFilesForMesh(hkxVertexSelection_path, meshName);
+
+		// Only add stuff to the hkxselection groups if there were any files
+		if (!fileNames.empty()) {
+			std::string basePath = hkxVertexSelection_path;
+			if (!basePath.empty() && basePath.back() != '\\' && basePath.back() != '/') {
+				basePath += '\\';
+			}
+			basePath += "export_data\\";
+
+			for (size_t i = 0; i < fileNames.size(); ++i) {
+				std::string fullPath = basePath + fileNames[i];
+				std::vector<int> selectGroup = adducindex(fullPath);
+
+				printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
+				
+				// <meshname>_groupname.txt = groupname
+				// <meshname>groupname1.txt = groupname1
+				size_t startPos = strlen(meshName);
+				if (startPos < fileNames[i].size() && fileNames[i][startPos] == '_') {
+					startPos++;
+				}
+
+				size_t endPos = fileNames[i].rfind(".txt");
+				hkxSelectionName = fileNames[i].substr(startPos, endPos - startPos);
+
+				hkxSelectionGroups.push_back(selectGroup);
+				hkxSelectionNames.push_back(hkxSelectionName);
+			}
 		}
-		basePath += "export_data\\";
 
-		for (size_t i = 0; i < fileNames.size(); ++i) {
-			std::string fullPath = basePath + fileNames[i];
-			std::vector<int> selectGroup = adducindex(fullPath);
+		n_hkxvertexselectionsets = hkxSelectionGroups.size();
 
-			printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
-        
-			// Store the selection group and its name
-			hkxSelectionGroups.push_back(selectGroup);
-			hkxSelectionNames.push_back(fileNames[i]);
-		}
+		printf("Done adding %i hkxSelectionGroups\r\n", n_hkxvertexselectionsets);
 	}
-
-	int n_hkxvertexselectionsets = hkxSelectionGroups.size();
-
-	printf("Done adding %i hkxSelectionGroups\r\n", n_hkxvertexselectionsets);
-
 
 	FbxMesh* originalMesh = meshNode->GetMesh();
 	FbxMesh* triMesh = NULL;
@@ -419,13 +435,11 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	if (elemMat)
 	{
 		mode = elemMat->GetMappingMode();
-		printf("elemMat\r\n");
 	}
 	else
 	{
 		// If there is no material mapping we create a dummy material and map everything to it.
 		mode = FbxLayerElement::eAllSame;
-		printf("eAllSame");
 		// If there is no material mapping there also shouldn't be any materials.
 		// Nevertheless we check this just to be sure.
 		if (matIds.isEmpty())
@@ -435,7 +449,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		}
 	}
 	if (mode == FbxLayerElement::eByPolygon)
-		printf("eByPolygon, NOT SUPPORTED\r\n");
+		printf("eByPolygon, multiple materials is NOT SUPPORTED, everything is assigned to the first material.\r\n");
 	
 
 	// Create subsection for each material
@@ -463,7 +477,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 				materialIndices.pushBack(i);
 			}
 			if (curMat > 0)
-				continue; // this might be shaky, just skip ahead if there is more than one material on the mesh
+				continue; // this might be shaky, just skip ahead if there is more than one material on the mesh (all polys added to first one as if it was the only one)
 
 			/*
 			FbxLayerElementArrayTemplate<int>& indexArray = elemMat->GetIndexArray();
@@ -513,37 +527,43 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		// should probably be under the material parsing section though, this banks on there being just one hkxmeshsection...
 		// hkxSelectionNames
 
-		printf("Creating hkxVertexSelectionSets for a hkxmeshsection\r\n");
-		std::vector<int> tmpIndexBufferHolder; //temp holder for the indicies in this section
+		// skip for collision meshes
+		if (!strncmp(meshName, "collision_", 10) == 0) 
+		{ 
 
-		for (auto it = newIB->m_indices32.begin(); it != newIB->m_indices32.end(); ++it) {
-			tmpIndexBufferHolder.push_back(*it);
-		}
-		std::unordered_set<int> validIndices(tmpIndexBufferHolder.begin(), tmpIndexBufferHolder.end());
 
-		printf("size of indexbuffer holder: %i\r\n",tmpIndexBufferHolder.size());
-		hkArray<hkxVertexSelectionChannel*> arrSelChannel;
-		arrSelChannel.setSize(n_hkxvertexselectionsets);
-		int curUserChannelSize = newSection->m_userChannels.getSize();
-		newSection->m_userChannels.setSize(curUserChannelSize + n_hkxvertexselectionsets);
-		for (int i = 0; i<n_hkxvertexselectionsets; i++)
-		{
-			//init the vectors
-			arrSelChannel[i] = new hkxVertexSelectionChannel();
-			for (int hkxSelectionGroupidx = 0; hkxSelectionGroupidx < hkxSelectionGroups[i].size(); hkxSelectionGroupidx++)
-			{
-				int vertexIndex = hkxSelectionGroups[i][hkxSelectionGroupidx];
+			printf("Creating hkxVertexSelectionSets for a hkxmeshsection\r\n");
+			std::vector<int> tmpIndexBufferHolder; //temp holder for the indicies in this section
 
-				if (validIndices.find(vertexIndex) == validIndices.end())
-				{
-					printf("Error: Vertex index %d is invalid. Not found in index buffer.\n", vertexIndex);
-					continue;
-				}
-
-				arrSelChannel[i]->m_selectedVertices.pushBack(hkxSelectionGroups[i][hkxSelectionGroupidx]);
+			for (auto it = newIB->m_indices32.begin(); it != newIB->m_indices32.end(); ++it) {
+				tmpIndexBufferHolder.push_back(*it);
 			}
-			newSection->m_userChannels[curUserChannelSize+i] = arrSelChannel[i];
-			printf("Added vertexSelectionset with %i entries\r\n", arrSelChannel[i]->m_selectedVertices.getSize());
+			std::unordered_set<int> validIndices(tmpIndexBufferHolder.begin(), tmpIndexBufferHolder.end());
+
+			printf("size of indexbuffer holder: %i\r\n",tmpIndexBufferHolder.size());
+			hkArray<hkxVertexSelectionChannel*> arrSelChannel;
+			arrSelChannel.setSize(n_hkxvertexselectionsets);
+			int curUserChannelSize = newSection->m_userChannels.getSize();
+			newSection->m_userChannels.setSize(curUserChannelSize + n_hkxvertexselectionsets);
+			for (int i = 0; i<n_hkxvertexselectionsets; i++)
+			{
+				//init the vectors
+				arrSelChannel[i] = new hkxVertexSelectionChannel();
+				for (int hkxSelectionGroupidx = 0; hkxSelectionGroupidx < hkxSelectionGroups[i].size(); hkxSelectionGroupidx++)
+				{
+					int vertexIndex = hkxSelectionGroups[i][hkxSelectionGroupidx];
+
+					if (validIndices.find(vertexIndex) == validIndices.end())
+					{
+						printf("Error: Vertex index %d is invalid. Not found in index buffer.\n", vertexIndex);
+						continue;
+					}
+
+					arrSelChannel[i]->m_selectedVertices.pushBack(hkxSelectionGroups[i][hkxSelectionGroupidx]);
+				}
+				newSection->m_userChannels[curUserChannelSize+i] = arrSelChannel[i];
+				printf("Added vertexSelectionset with %i entries\r\n", arrSelChannel[i]->m_selectedVertices.getSize());
+			}
 		}
 		// *************************************DONE ADDING HKXVERTEXSELECTIONSETS*************************************
 
@@ -595,20 +615,23 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		}
 	}
 
+
+
+
 	// Loop over all extra vertex groups and add userinfochannels for them
-	// hkxSelectionNames
-
-	for (int curhkxSelectionSet = 0; curhkxSelectionSet < hkxSelectionNames.size(); curhkxSelectionSet++)
-	{
-		// Add a hkxMesh::UserChannelInfo for each hkxertexselection set we created earlier, in the same order
-		hkxMesh::UserChannelInfo* newUCI = new hkxMesh::UserChannelInfo();
-		newUCI->m_name = hkxSelectionNames[curhkxSelectionSet].c_str();
-		newUCI->m_className="hkxVertexSelectionChannel";
-		newMesh->m_userChannelInfos.pushBack(newUCI);
-		newUCI->removeReference();
-
+	// again, skip for collision meshes
+	if (!strncmp(meshName, "collision_", 10) == 0)  // "collision_" is 10 chars long
+	{ 
+		for (int curhkxSelectionSet = 0; curhkxSelectionSet < hkxSelectionNames.size(); curhkxSelectionSet++)
+		{
+			// Add a hkxMesh::UserChannelInfo for each hkxertexselection set we created earlier, in the same order
+			hkxMesh::UserChannelInfo* newUCI = new hkxMesh::UserChannelInfo();
+			newUCI->m_name = hkxSelectionNames[curhkxSelectionSet].c_str();
+			newUCI->m_className="hkxVertexSelectionChannel";
+			newMesh->m_userChannelInfos.pushBack(newUCI);
+			newUCI->removeReference();
+		}
 	}
-
 	if (m_options.m_exportVertexTangents)
 	{
 		hkxMeshSectionUtil::computeTangents(newMesh, true, originalMesh->GetName());
