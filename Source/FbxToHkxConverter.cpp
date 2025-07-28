@@ -373,15 +373,33 @@ void FbxToHkxConverter::addNodesRecursive(hkxScene *scene, FbxNode* fbxNode, hkx
 			hkxAttribute* shapeTypeAttr = new hkxAttribute();
 			shapeTypeAttr->m_name = "collidableShapeType";
 
-			// Set value as needed (sphere, capsule, etc.)
+			// Set value based on collision type
 			hkxSparselyAnimatedString* animatedStringData = new hkxSparselyAnimatedString();
 			shapeTypeAttr->m_value = animatedStringData;
-			//     { ST_SPHERE,"Sphere" },
-			//     { ST_PLANE,"Plane" },
-			//     { ST_CAPSULE,"Capsule" },
-			//     { ST_CONVEX_GEOMETRY,"Convex Geometry" },
-			//     { ST_CONVEX_HEIGHTFIELD,"Convex Heightfield" },
-			animatedStringData->m_strings.expandOne() = "Capsule";
+
+			const char* nodeName = newChildNode->m_name.cString();
+			bool recognizedType = true;
+
+			if (strncmp(nodeName, "collision_sphere", 16) == 0) {
+				animatedStringData->m_strings.expandOne() = "Sphere";
+			}
+			else if (strncmp(nodeName, "collision_plane", 15) == 0) {
+				animatedStringData->m_strings.expandOne() = "Plane";
+			}
+			else if (strncmp(nodeName, "collision_capsule", 17) == 0) {
+				animatedStringData->m_strings.expandOne() = "Capsule";
+			}
+			else if (strncmp(nodeName, "collision_convexgeom", 20) == 0) {
+				animatedStringData->m_strings.expandOne() = "Convex Geometry";
+			}
+			else if (strncmp(nodeName, "collision_convexheight", 22) == 0) {
+				animatedStringData->m_strings.expandOne() = "Convex Heightfield";
+			}
+			else {
+				// Default to "Capsule" but warn about unrecognized type
+				animatedStringData->m_strings.expandOne() = "Capsule";
+				printf("Warning: Unrecognized collision type in '%s' (defaulting to 'Capsule')\n", nodeName);
+			}
 			animatedStringData->m_times.expandOne() = 0.f; // not size
 			animatedStringData->removeReference();
 
