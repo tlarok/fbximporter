@@ -720,6 +720,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 					{
 						//init the vectors
 						arrFloatDataChannel[i] = new hkxVertexFloatDataChannel();
+						arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::DISTANCE;
 						for (int hkxFloatDataChannelidx = 0; hkxFloatDataChannelidx < hkxFloatDataChannels[i].size(); hkxFloatDataChannelidx++)
 						{
 							// floatdatachannels have one value for each index in the indexbuffer, i.e. just check them all
@@ -804,8 +805,8 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 			}
 			else
 			{
-				newUCI->m_className="hkxFloatDataChannel";
-				printf("Adding hkxFloatDataChannel: %s\r\n",  hkxUserChannelNames[curUserChannelIdx].c_str());
+				newUCI->m_className="hkxVertexFloatDataChannel";
+				printf("Adding hkxVertexFloatDataChannel: %s\r\n",  hkxUserChannelNames[curUserChannelIdx].c_str());
 			}
 			newMesh->m_userChannelInfos.pushBack(newUCI);
 			newUCI->removeReference();
