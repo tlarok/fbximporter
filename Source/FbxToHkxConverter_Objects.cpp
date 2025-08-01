@@ -11,6 +11,7 @@
 #include <Common/SceneData/Skin/hkxSkinUtils.h>
 #include <Common/SceneData/Mesh/hkxMeshSectionUtil.h>
 #include <Common/SceneData/Mesh/Channels/hkxVertexSelectionChannel.h>
+#include <Common/SceneData/Mesh/Channels/hkxVertexFloatDataChannel.h>
 #include <windows.h>
 #include <iostream>
 #include <fstream>
@@ -210,23 +211,25 @@ static hkxMaterial* createDefaultMaterial(const char* name)
 #include <vector>
 #include <stdio.h> // for printf
 
-std::vector<std::string> getSelectionFilesForMesh(const std::string& folder, const std::string& meshName)
+std::vector<std::string> getSelectionFilesForMesh(const std::string& input_path, const std::string& meshName)
 {
+	std::vector<std::string> result;
+	std::string searchPath = input_path;
 
-	std::string folderPath;
-	if (folder.empty()) //if no folder then set to current dir, fbximporter.exe probably in same dir as fbx
-	{
-		folderPath = "."; 
-	} else {
-		folderPath = folder;
-	}
-    std::vector<std::string> result;
-    std::string searchPath = folderPath + "/export_data";
+
     if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
         searchPath += '\\';
+
+	searchPath += "selectionsets";
+
+	if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
+        searchPath += '\\';
+
     searchPath += meshName;
 	searchPath += "_";
 	searchPath += "*.txt";
+
+	printf("searching for %s\r\n", searchPath);
 
     WIN32_FIND_DATAA findData;
     HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
@@ -270,7 +273,69 @@ std::vector<std::string> getSelectionFilesForMesh(const std::string& folder, con
     return result;
 }
 
-std::vector<int> adducindex(const std::string& fullFilePath)
+std::vector<std::string> getFloatDataFilesForMesh(const std::string& input_path, const std::string& meshName)
+{
+	
+	std::vector<std::string> result;
+	std::string searchPath = input_path;;
+
+    if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
+        searchPath += '\\';
+
+	searchPath += "floatchannels";
+
+	if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
+        searchPath += '\\';
+
+    searchPath += meshName;
+	searchPath += "_";
+	searchPath += "*.txt";
+
+	printf("searching for %s\r\n", searchPath);
+
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
+
+    if (hFind == INVALID_HANDLE_VALUE)
+    {
+        DWORD error = GetLastError();
+		if (error == 2 || error == 3){
+			printf("Extra export/mesh data not found, there will be no hkxFloatDataChannels (Error code: %d, file not found)\n", error);
+		} else {
+			printf("Extra export/mesh data not found, there will be no hkxFloatDataChannels. (Unknown error code: %d)\n", error);
+		}
+        return result;
+    }
+
+
+
+    do
+    {
+        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        {
+            std::string fileName = findData.cFileName;
+            printf("Found file with extra mesh data: %s\n", fileName.c_str());
+			result.push_back(fileName);
+			/*
+            // Create the expected prefix (meshName + underscore)
+            std::string targetPrefix = meshName + "_";
+            
+            if (fileName.size() >= targetPrefix.size() &&
+                fileName.compare(0, targetPrefix.size(), targetPrefix) == 0)
+            {
+                printf("Match found: %s\n", fileName.c_str());
+                result.push_back(fileName);
+            }
+			*/
+        }
+    } while (FindNextFileA(hFind, &findData));
+
+    FindClose(hFind);
+    printf("Total matching files found: %d\n", result.size());
+    return result;
+}
+
+std::vector<int> addUVindex(const std::string& fullFilePath)
 {
     std::vector<int> uvIndices;
     std::ifstream file(fullFilePath.c_str());
@@ -307,31 +372,82 @@ std::vector<int> adducindex(const std::string& fullFilePath)
     return uvIndices;
 }
 
-void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node, const char* hkxVertexSelection_path)
+std::vector<float> addFloatChannel(const std::string& fullFilePath)
+{
+    std::vector<float> floatChannel;
+    std::ifstream file(fullFilePath.c_str());
+
+    if (!file.is_open()) {
+        printf("Failed to open file: %s\n", fullFilePath.c_str());
+        return floatChannel;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+
+        std::istringstream iss(line);
+        std::string token;
+
+        while (iss >> token) {
+            if (!token.empty() && token[token.length() - 1] == ':') continue;
+
+            std::stringstream conv(token);
+            float floatValue;
+            if (conv >> floatValue) {
+                floatChannel.push_back(floatValue);
+            } else {
+                printf("Invalid number: %s\n", token.c_str());
+            }
+        }
+    }
+
+    file.close();
+    return floatChannel;
+}
+
+void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node, const char* hkxExtraData_path)
 {
 	const char* meshName = meshNode->GetName();
 	printf("Processing mesh %s\r\n", meshName);
 	
 	int n_hkxvertexselectionsets;
+	int n_hkxfloatdatachannels;
+	std::string extraDataFolder = hkxExtraData_path;
 	std::vector<std::string> fileNames;
 	std::vector<std::vector<int>> hkxSelectionGroups;
-	std::vector<std::string> hkxSelectionNames;
-	std::string hkxSelectionName;
+	std::vector<std::vector<float>> hkxFloatDataChannels;
+	std::vector<std::string> hkxUserChannelNames;
+	std::string hkxUserChannelName;
 
 	if (!strncmp(meshName, "collision_", 10) == 0)  // "collision_" is 10 chars long
 	{ 
-		fileNames = getSelectionFilesForMesh(hkxVertexSelection_path, meshName);
+		//massage the extra data path
+		if (extraDataFolder.empty()) //if no folder then set to current dir, fbximporter.exe probably in same dir as fbx
+		{
+			extraDataFolder = "."; 
+		} 
+
+		std::vector<std::string> result;
+		std::string searchPath;
+
+		if (extraDataFolder.length() >= std::string("/export_data").length() && extraDataFolder.compare(extraDataFolder.length() - std::string("/export_data").length(), std::string("/export_data").length(), "/export_data") == 0) {
+			searchPath = extraDataFolder;
+		} else {
+			searchPath = extraDataFolder + "/export_data";
+		}
+
+		if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
+			searchPath += '\\';
+
+
+		fileNames = getSelectionFilesForMesh(searchPath, meshName);
 		// Only add stuff to the hkxselection groups if there were any files
-		if (!fileNames.empty()) {
-			std::string basePath = hkxVertexSelection_path;
-			if (!basePath.empty() && basePath.back() != '\\' && basePath.back() != '/') {
-				basePath += '\\';
-			}
-			basePath += "export_data\\";
+		if (!fileNames.empty()) 
+		{
+			std::string basePath = searchPath + "selectionsets\\";
 
 			for (size_t i = 0; i < fileNames.size(); ++i) {
-				std::string fullPath = basePath + fileNames[i];
-				std::vector<int> selectGroup = adducindex(fullPath);
+				std::vector<int> selectGroup = addUVindex(basePath + fileNames[i]);
 
 				printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
 				
@@ -339,16 +455,41 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 				size_t startPos = strlen(meshName)+1;
 
 				size_t endPos = fileNames[i].rfind(".txt");
-				hkxSelectionName = fileNames[i].substr(startPos, endPos - startPos);
+				hkxUserChannelName = fileNames[i].substr(startPos, endPos - startPos);
 
 				hkxSelectionGroups.push_back(selectGroup);
-				hkxSelectionNames.push_back(hkxSelectionName);
+				hkxUserChannelNames.push_back(hkxUserChannelName);
 			}
 		}
 
 		n_hkxvertexselectionsets = hkxSelectionGroups.size();
-
 		printf("Done adding %i hkxSelectionGroups\r\n", n_hkxvertexselectionsets);
+
+		fileNames.clear();
+		fileNames = getFloatDataFilesForMesh(searchPath, meshName);
+
+		if (!fileNames.empty()) 
+		{
+			std::string basePath = searchPath + "floatchannels\\";
+
+			for (size_t i = 0; i < fileNames.size(); ++i) {
+
+				std::vector<float> floatChannelGroup = addFloatChannel(basePath + fileNames[i]);
+
+				printf("Parsed %d indices from %s\n", (int)floatChannelGroup.size(), fileNames[i].c_str());
+				
+				// <meshname>_groupname.txt = groupname
+				size_t startPos = strlen(meshName)+1;
+
+				size_t endPos = fileNames[i].rfind(".txt");
+				hkxUserChannelName = fileNames[i].substr(startPos, endPos - startPos);
+
+				hkxFloatDataChannels.push_back(floatChannelGroup);
+				hkxUserChannelNames.push_back(hkxUserChannelName);
+			}
+		}
+		n_hkxfloatdatachannels = hkxFloatDataChannels.size();
+		printf("Done adding %i hkxFloatDataChannels\r\n", n_hkxfloatdatachannels);
 	}
 
 	FbxMesh* originalMesh = meshNode->GetMesh();
@@ -523,48 +664,81 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		// should probably be under the material parsing section though, this banks on there being just one hkxmeshsection...
 		// hkxSelectionNames
 
+		hkArray<hkxVertexSelectionChannel*> arrSelChannel;
+		hkArray<hkxVertexFloatDataChannel*> arrFloatDataChannel;
+
 		// skip for collision meshes
 		if (!strncmp(meshName, "collision_", 10) == 0) 
 		{ 
-
-
-			printf("Creating hkxVertexSelectionSets for a hkxmeshsection\r\n");
-			std::vector<int> tmpIndexBufferHolder; //temp holder for the indicies in this section
-
-			for (auto it = newIB->m_indices32.begin(); it != newIB->m_indices32.end(); ++it) {
-				tmpIndexBufferHolder.push_back(*it);
-			}
-			std::unordered_set<int> validIndices(tmpIndexBufferHolder.begin(), tmpIndexBufferHolder.end());
-
-			printf("size of indexbuffer holder: %i\r\n",tmpIndexBufferHolder.size());
-			hkArray<hkxVertexSelectionChannel*> arrSelChannel;
-			arrSelChannel.setSize(n_hkxvertexselectionsets);
-			int curUserChannelSize = newSection->m_userChannels.getSize();
-			newSection->m_userChannels.setSize(curUserChannelSize + n_hkxvertexselectionsets);
-			for (int i = 0; i<n_hkxvertexselectionsets; i++)
+			if (n_hkxvertexselectionsets > 0 || n_hkxfloatdatachannels > 0)
 			{
-				//init the vectors
-				arrSelChannel[i] = new hkxVertexSelectionChannel();
-				for (int hkxSelectionGroupidx = 0; hkxSelectionGroupidx < hkxSelectionGroups[i].size(); hkxSelectionGroupidx++)
-				{
-					int vertexIndex = hkxSelectionGroups[i][hkxSelectionGroupidx];
+				std::vector<int> tmpIndexBufferHolder; //temp holder for the indicies in this section
 
-					if (validIndices.find(vertexIndex) == validIndices.end())
-					{
-						printf("Error: Vertex index %d is invalid. Not found in index buffer.\n", vertexIndex);
-						continue;
-					}
-
-					arrSelChannel[i]->m_selectedVertices.pushBack(hkxSelectionGroups[i][hkxSelectionGroupidx]);
+				for (auto it = newIB->m_indices32.begin(); it != newIB->m_indices32.end(); ++it) {
+					tmpIndexBufferHolder.push_back(*it);
 				}
-				newSection->m_userChannels[curUserChannelSize+i] = arrSelChannel[i];
-				printf("Added vertexSelectionset with %i entries\r\n", arrSelChannel[i]->m_selectedVertices.getSize());
+				std::unordered_set<int> validIndices(tmpIndexBufferHolder.begin(), tmpIndexBufferHolder.end());
+
+				printf("size of indexbuffer holder: %i\r\n",tmpIndexBufferHolder.size());
+			
+				int curUserChannelSize = newSection->m_userChannels.getSize();
+				newSection->m_userChannels.setSize(curUserChannelSize + n_hkxfloatdatachannels + n_hkxvertexselectionsets);
+
+
+				// TODO only one name vector for both vertexselectionsets and floatdatachannels, vertexselectionsets first
+
+				if (n_hkxvertexselectionsets > 0)
+				{
+					printf("Creating hkxVertexSelectionSets for %s\r\n", meshName);
+				
+					arrSelChannel.setSize(n_hkxvertexselectionsets);
+					for (int i = 0; i<n_hkxvertexselectionsets; i++)
+					{
+						//init the vectors
+						arrSelChannel[i] = new hkxVertexSelectionChannel();
+						for (int hkxSelectionGroupidx = 0; hkxSelectionGroupidx < hkxSelectionGroups[i].size(); hkxSelectionGroupidx++)
+						{
+							int vertexIndex = hkxSelectionGroups[i][hkxSelectionGroupidx];
+
+							if (validIndices.find(vertexIndex) == validIndices.end())
+							{
+								printf("Error: Vertex index %d is invalid. Not found in index buffer.\n", vertexIndex);
+								continue;
+							}
+
+							arrSelChannel[i]->m_selectedVertices.pushBack(hkxSelectionGroups[i][hkxSelectionGroupidx]);
+						}
+						newSection->m_userChannels[curUserChannelSize+i] = arrSelChannel[i];
+						printf("Added vertexSelectionset with %i entries\r\n", arrSelChannel[i]->m_selectedVertices.getSize());
+					}
+				}
+
+				if (n_hkxfloatdatachannels > 0)
+				{
+					arrFloatDataChannel.setSize(n_hkxfloatdatachannels);
+					for (int i = 0; i<n_hkxfloatdatachannels; i++)
+					{
+						//init the vectors
+						arrFloatDataChannel[i] = new hkxVertexFloatDataChannel();
+						for (int hkxFloatDataChannelidx = 0; hkxFloatDataChannelidx < hkxFloatDataChannels[i].size(); hkxFloatDataChannelidx++)
+						{
+							// floatdatachannels have one value for each index in the indexbuffer, i.e. just check them all
+							if (validIndices.find(hkxFloatDataChannelidx) == validIndices.end())
+							{
+								printf("Error: Vertex index %d is invalid. Not found in index buffer.\n", hkxFloatDataChannelidx);
+								continue;
+							}
+							arrFloatDataChannel[i]->m_perVertexFloats.pushBack(hkxFloatDataChannels[i][hkxFloatDataChannelidx]);
+						}
+						newSection->m_userChannels[curUserChannelSize+n_hkxvertexselectionsets+i] = arrFloatDataChannel[i];
+						printf("Added FloatDataChannel with %i entries\r\n", arrFloatDataChannel[i]->m_perVertexFloats.getSize());
+					}
+				}
 			}
+			
 		}
 		// *************************************DONE ADDING HKXVERTEXSELECTIONSETS*************************************
-
 		exportedSections.pushBack(newSection);
-
 		if (sectMat)
 		{
 			sectMat->removeReference();
@@ -581,7 +755,6 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 		newMesh->m_sections[cs] = exportedSections[cs];
 		exportedSections[cs]->removeReference();
 	}
-
 
 	// Add skin bindings
 	if (lSkinCount > 0)
@@ -618,12 +791,22 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	// again, skip for collision meshes
 	if (!strncmp(meshName, "collision_", 10) == 0)  // "collision_" is 10 chars long
 	{ 
-		for (int curhkxSelectionSet = 0; curhkxSelectionSet < hkxSelectionNames.size(); curhkxSelectionSet++)
+		for (int curUserChannelIdx = 0; curUserChannelIdx < hkxUserChannelNames.size(); curUserChannelIdx++)
 		{
+			
 			// Add a hkxMesh::UserChannelInfo for each hkxertexselection set we created earlier, in the same order
 			hkxMesh::UserChannelInfo* newUCI = new hkxMesh::UserChannelInfo();
-			newUCI->m_name = hkxSelectionNames[curhkxSelectionSet].c_str();
-			newUCI->m_className="hkxVertexSelectionChannel";
+			newUCI->m_name = hkxUserChannelNames[curUserChannelIdx].c_str();
+			if (curUserChannelIdx < n_hkxvertexselectionsets)
+			{
+				newUCI->m_className="hkxVertexSelectionChannel";
+				printf("Adding hkxVertexSelectionChannel: %s\r\n",  hkxUserChannelNames[curUserChannelIdx].c_str());
+			}
+			else
+			{
+				newUCI->m_className="hkxFloatDataChannel";
+				printf("Adding hkxFloatDataChannel: %s\r\n",  hkxUserChannelNames[curUserChannelIdx].c_str());
+			}
 			newMesh->m_userChannelInfos.pushBack(newUCI);
 			newUCI->removeReference();
 		}

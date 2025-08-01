@@ -105,14 +105,14 @@ int main(int argc, char* argv[])
 			return -1;
 		}
 		printf("setting up export_data path... \r\n");
-		hkStringBuf hkxVertexSelection_path;
+		hkStringBuf hkxExtraData_path;
 		if (exportDataFolder != NULL)
 		{
 			//export data folder specified
-			hkxVertexSelection_path = exportDataFolder;
-			hkxVertexSelection_path.pathNormalize();
+			hkxExtraData_path = exportDataFolder;
+			hkxExtraData_path.pathNormalize();
 			struct stat info;
-			if (stat(hkxVertexSelection_path.cString(), &info) != 0)
+			if (stat(hkxExtraData_path.cString(), &info) != 0)
 			{
 				printf("Specified export folder \r\n");
 			}
@@ -128,11 +128,11 @@ int main(int argc, char* argv[])
 		} else 
 		{
 			//NO export data folder specified
-			hkxVertexSelection_path = filename;
-			hkxVertexSelection_path.pathDirname();
+			hkxExtraData_path = filename;
+			hkxExtraData_path.pathDirname();
 			// Check if the resulting path is empty (no directory component)
-			if (hkxVertexSelection_path[0] == '\0') {  // Explicit empty string check
-				hkxVertexSelection_path = ".";
+			if (hkxExtraData_path[0] == '\0') {  // Explicit empty string check
+				hkxExtraData_path = ".";
 			}
 
 		}
@@ -168,7 +168,7 @@ int main(int argc, char* argv[])
 		FbxToHkxConverter::Options options(fbxSdkManager);
 		FbxToHkxConverter converter(options);
 
-		if(converter.createScenes(fbxScene, noTakes, hkxVertexSelection_path))
+		if(converter.createScenes(fbxScene, noTakes, hkxExtraData_path))
 		{
 			hkStringBuf path;
 			hkStringBuf name;
