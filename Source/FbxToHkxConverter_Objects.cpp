@@ -720,22 +720,22 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 					{
 						//init the vectors
 						arrFloatDataChannel[i] = new hkxVertexFloatDataChannel();
+
+						// the first entry in floatdatachannel is the enum for data type (FLOAT/DISTANCE/ANGLE)
+						float enumSwitch = hkxFloatDataChannels[i][0];
+						if (enumSwitch == 0)
+							arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::FLOAT;
+						else if (enumSwitch == 1)
+							arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::DISTANCE;
+						else if (enumSwitch == 2)
+							arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::ANGLE;
+						else
+							printf("Error: invalid value for hkxVertexFloatDataChannel enum datatype: %d, valid values are 0.0, 1.0, 2.0 \r\n", enumSwitch);
+
+						hkxFloatDataChannels[i].erase(hkxFloatDataChannels[i].begin()); // pop first element so indices are aligned without weird adjustments
+
 						for (int hkxFloatDataChannelidx = 0; hkxFloatDataChannelidx < hkxFloatDataChannels[i].size(); hkxFloatDataChannelidx++)
 						{
-							// the first entry in floatdatachannel is the enum for data type (FLOAT/DISTANCE/ANGLE)
-							if (hkxFloatDataChannelidx == 0)
-							{
-								float enumSwitch = hkxFloatDataChannels[i][hkxFloatDataChannelidx];
-								if (enumSwitch == 0)
-									arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::FLOAT;
-								else if (enumSwitch == 1)
-									arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::DISTANCE;
-								else if (enumSwitch == 2)
-									arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::ANGLE;
-								else
-									printf("Error: invalid value for hkxVertexFloatDataChannel enum datatype: %d, valid values are 0.0, 1.0, 2.0 \r\n", enumSwitch);
-								continue;
-							}
 							// floatdatachannels have one value for each index in the indexbuffer, i.e. just check them all
 							if (validIndices.find(hkxFloatDataChannelidx) == validIndices.end())
 							{
