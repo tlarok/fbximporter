@@ -476,7 +476,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 
 				std::vector<float> floatChannelGroup = addFloatChannel(basePath + fileNames[i]);
 
-				printf("Parsed %d indices from %s\n", (int)floatChannelGroup.size(), fileNames[i].c_str());
+				printf("Parsed %d indices from %s\n", (int)floatChannelGroup.size()-1, fileNames[i].c_str()); // minus one since first number is the enum for type (float / distance / angle)
 				
 				// <meshname>_groupname.txt = groupname
 				size_t startPos = strlen(meshName)+1;
@@ -720,9 +720,22 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 					{
 						//init the vectors
 						arrFloatDataChannel[i] = new hkxVertexFloatDataChannel();
-						arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::DISTANCE;
 						for (int hkxFloatDataChannelidx = 0; hkxFloatDataChannelidx < hkxFloatDataChannels[i].size(); hkxFloatDataChannelidx++)
 						{
+							// the first entry in floatdatachannel is the enum for data type (FLOAT/DISTANCE/ANGLE)
+							if (hkxFloatDataChannelidx == 0)
+							{
+								float enumSwitch = hkxFloatDataChannels[i][hkxFloatDataChannelidx];
+								if (enumSwitch == 0)
+									arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::FLOAT;
+								else if (enumSwitch == 1)
+									arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::DISTANCE;
+								else if (enumSwitch == 2)
+									arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::ANGLE;
+								else
+									printf("Error: invalid value for hkxVertexFloatDataChannel enum datatype: %d, valid values are 0.0, 1.0, 2.0 \r\n", enumSwitch);
+								continue;
+							}
 							// floatdatachannels have one value for each index in the indexbuffer, i.e. just check them all
 							if (validIndices.find(hkxFloatDataChannelidx) == validIndices.end())
 							{
@@ -732,7 +745,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 							arrFloatDataChannel[i]->m_perVertexFloats.pushBack(hkxFloatDataChannels[i][hkxFloatDataChannelidx]);
 						}
 						newSection->m_userChannels[curUserChannelSize+n_hkxvertexselectionsets+i] = arrFloatDataChannel[i];
-						printf("Added FloatDataChannel with %i entries\r\n", arrFloatDataChannel[i]->m_perVertexFloats.getSize());
+						printf("Added FloatDataChannel of type %i, with %i entries\r\n", arrFloatDataChannel[i]->m_dimensions, arrFloatDataChannel[i]->m_perVertexFloats.getSize());
 					}
 				}
 			}
