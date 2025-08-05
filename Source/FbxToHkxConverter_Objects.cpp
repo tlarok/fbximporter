@@ -389,7 +389,7 @@ std::vector<float> addFloatChannel(const std::string& fullFilePath)
         std::string token;
 
         while (iss >> token) {
-            if (!token.empty() && token[token.length() - 1] == ':') continue;
+            if (!token.empty()) continue;
 
             std::stringstream conv(token);
             float floatValue;
@@ -702,7 +702,7 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 
 							if (validIndices.find(vertexIndex) == validIndices.end())
 							{
-								printf("Error: Vertex index %d is invalid. Not found in index buffer.\n", vertexIndex);
+								printf("Error: Vertex index %d is invalid (in selection set %s). Not found in index buffer.\n", vertexIndex, hkxUserChannelNames[hkxSelectionGroupidx+curUserChannelSize]);
 								continue;
 							}
 
