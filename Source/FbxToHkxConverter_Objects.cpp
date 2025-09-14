@@ -22,6 +22,11 @@
 #include <string>
 #include <cctype>
 #include <unordered_set>
+#include <map>
+#include "rapidjson/document.h"
+#include "rapidjson/filereadstream.h"
+
+std::vector<int> collectIntsFlat(const rapidjson::Value& group);
 
 template <class T>
 void convertPropertyToVector4(const FbxPropertyT<T> &property, hkVector4 &vec, float z = 0.0f)
@@ -206,203 +211,119 @@ static hkxMaterial* createDefaultMaterial(const char* name)
 	return mat;
 }
 
-#include <windows.h>
-#include <string>
-#include <vector>
-#include <stdio.h> // for printf
-
-std::vector<std::string> getSelectionFilesForMesh(const std::string& input_path, const std::string& meshName)
+bool loadJsonFile(const std::string& filePath, rapidjson::Document& doc)
 {
-	std::vector<std::string> result;
-	std::string searchPath = input_path;
-
-
-    if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
-        searchPath += '\\';
-
-	searchPath += "selectionsets";
-
-	if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
-        searchPath += '\\';
-
-    searchPath += meshName;
-	searchPath += "_";
-	searchPath += "*.txt";
-
-	printf("searching for %s\r\n", searchPath);
-
-    WIN32_FIND_DATAA findData;
-    HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
-
-    if (hFind == INVALID_HANDLE_VALUE)
-    {
-        DWORD error = GetLastError();
-		if (error == 2 || error == 3){
-			printf("Extra export/mesh data not found, there will be no hkxSelectionSets (Error code: %d, file not found)\n", error);
-		} else {
-			printf("Extra export/mesh data not found, there will be no hkxSelectionSets. (Unknown error code: %d)\n", error);
-		}
-        return result;
+    FILE* fp = nullptr;
+    errno_t err = fopen_s(&fp, filePath.c_str(), "rb");
+    if (err != 0 || !fp) {
+        std::cerr << "Failed to open JSON file: " << filePath << std::endl;
+        return false;
     }
 
+    char buffer[65536];
+    rapidjson::FileReadStream is(fp, buffer, sizeof(buffer));
+    doc.ParseStream(is);
+    fclose(fp);
 
+    if (doc.HasParseError()) {
+        std::cerr << "JSON parse error at offset " << doc.GetErrorOffset() << std::endl;
+        return false;
+    }
 
-    do
-    {
-        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-        {
-            std::string fileName = findData.cFileName;
-            printf("Found file with extra mesh data: %s\n", fileName.c_str());
-			result.push_back(fileName);
-			/*
-            // Create the expected prefix (meshName + underscore)
-            std::string targetPrefix = meshName + "_";
-            
-            if (fileName.size() >= targetPrefix.size() &&
-                fileName.compare(0, targetPrefix.size(), targetPrefix) == 0)
-            {
-                printf("Match found: %s\n", fileName.c_str());
-                result.push_back(fileName);
-            }
-			*/
-        }
-    } while (FindNextFileA(hFind, &findData));
-
-    FindClose(hFind);
-    printf("Total matching files found: %d\n", result.size());
-    return result;
+    return true;
 }
 
-std::vector<std::string> getFloatDataFilesForMesh(const std::string& input_path, const std::string& meshName)
+std::vector<std::string> listMeshGroups(const rapidjson::Document& doc, const std::string& meshName)
 {
-	
-	std::vector<std::string> result;
-	std::string searchPath = input_path;;
+    std::vector<std::string> groups;
+    if (!doc.IsObject() || !doc.HasMember(meshName.c_str())) return groups;
 
-    if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
-        searchPath += '\\';
+    const rapidjson::Value& mesh = doc[meshName.c_str()];
+    if (!mesh.IsObject()) return groups;
 
-	searchPath += "floatchannels";
+    for (auto it = mesh.MemberBegin(); it != mesh.MemberEnd(); ++it)
+        groups.push_back(it->name.GetString());
 
-	if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
-        searchPath += '\\';
-
-    searchPath += meshName;
-	searchPath += "_";
-	searchPath += "*.txt";
-
-	printf("searching for %s\r\n", searchPath);
-
-    WIN32_FIND_DATAA findData;
-    HANDLE hFind = FindFirstFileA(searchPath.c_str(), &findData);
-
-    if (hFind == INVALID_HANDLE_VALUE)
-    {
-        DWORD error = GetLastError();
-		if (error == 2 || error == 3){
-			printf("Extra export/mesh data not found, there will be no hkxFloatDataChannels (Error code: %d, file not found)\n", error);
-		} else {
-			printf("Extra export/mesh data not found, there will be no hkxFloatDataChannels. (Unknown error code: %d)\n", error);
-		}
-        return result;
-    }
-
-
-
-    do
-    {
-        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-        {
-            std::string fileName = findData.cFileName;
-            printf("Found file with extra mesh data: %s\n", fileName.c_str());
-			result.push_back(fileName);
-			/*
-            // Create the expected prefix (meshName + underscore)
-            std::string targetPrefix = meshName + "_";
-            
-            if (fileName.size() >= targetPrefix.size() &&
-                fileName.compare(0, targetPrefix.size(), targetPrefix) == 0)
-            {
-                printf("Match found: %s\n", fileName.c_str());
-                result.push_back(fileName);
-            }
-			*/
-        }
-    } while (FindNextFileA(hFind, &findData));
-
-    FindClose(hFind);
-    printf("Total matching files found: %d\n", result.size());
-    return result;
+    return groups;
 }
 
-std::vector<int> addUVindex(const std::string& fullFilePath)
+std::vector<float> collectFloats(const rapidjson::Value& val)
 {
-    std::vector<int> uvIndices;
-    std::ifstream file(fullFilePath.c_str());
-
-    if (!file.is_open()) {
-        printf("Failed to open file: %s\n", fullFilePath.c_str());
-        return uvIndices;
+    std::vector<float> out;
+    if (val.IsArray()) {
+        for (rapidjson::SizeType i = 0; i < val.Size(); ++i)
+            if (val[i].IsNumber()) out.push_back(static_cast<float>(val[i].GetDouble()));
     }
-
-    std::string line;
-    while (std::getline(file, line)) {
-
-		if (line == "# UV Indices per selected vertex") {
-			continue;  // Skip header line
-		}
-
-        std::istringstream iss(line);
-        std::string token;
-
-        while (iss >> token) {
-            if (!token.empty() && token[token.length() - 1] == ':') continue;
-
-            std::stringstream conv(token);
-            int uvIndex;
-            if (conv >> uvIndex) {
-                uvIndices.push_back(uvIndex);
-            } else {
-                printf("Invalid number: %s\n", token.c_str());
+    else if (val.IsObject()) {
+        for (auto it = val.MemberBegin(); it != val.MemberEnd(); ++it) {
+            const rapidjson::Value& v = it->value;
+            if (v.IsArray()) {
+                for (rapidjson::SizeType i = 0; i < v.Size(); ++i)
+                    if (v[i].IsNumber()) out.push_back(static_cast<float>(v[i].GetDouble()));
             }
         }
     }
-
-    file.close();
-    return uvIndices;
+    return out;
 }
 
-std::vector<float> addFloatChannel(const std::string& fullFilePath)
+bool getGroupData(
+    const rapidjson::Document& doc,
+    const std::string& meshName,
+    const std::string& groupName,
+    int& outExportMode,
+    std::vector<float>& outFloats)
 {
-    std::vector<float> floatChannel;
-    std::ifstream file(fullFilePath.c_str());
+    outExportMode = -1;
+    outFloats.clear();
 
-    if (!file.is_open()) {
-        printf("Failed to open file: %s\n", fullFilePath.c_str());
-        return floatChannel;
-    }
+    if (!doc.IsObject() || !doc.HasMember(meshName.c_str())) return false;
+    const rapidjson::Value& mesh = doc[meshName.c_str()];
+    if (!mesh.IsObject() || !mesh.HasMember(groupName.c_str())) return false;
 
-    std::string line;
-    while (std::getline(file, line)) {
+    const rapidjson::Value& group = mesh[groupName.c_str()];
 
-        std::istringstream iss(line);
-        std::string token;
+    // export_mode is stored inside group object if it exists
+    if (group.IsObject() && group.HasMember("export_mode") && group["export_mode"].IsInt())
+        outExportMode = group["export_mode"].GetInt();
 
-        while (iss >> token) {
-            if (!token.empty()) continue;
+    outFloats = collectFloats(group);
+    return true;
+}
 
-            std::stringstream conv(token);
-            float floatValue;
-            if (conv >> floatValue) {
-                floatChannel.push_back(floatValue);
-            } else {
-                printf("Invalid number: %s\n", token.c_str());
+bool uvGetGroupIntData(
+    const rapidjson::Document& doc,
+    const std::string& meshName,
+    const std::string& groupName,
+    std::vector<int>& outValues)
+{
+    outValues.clear();
+
+    if (!doc.IsObject() || !doc.HasMember(meshName.c_str())) return false;
+    const rapidjson::Value& mesh = doc[meshName.c_str()];
+    if (!mesh.IsObject() || !mesh.HasMember(groupName.c_str())) return false;
+
+    const rapidjson::Value& group = mesh[groupName.c_str()];
+    outValues = collectIntsFlat(group);
+    return true;
+}
+
+std::vector<int> collectIntsFlat(const rapidjson::Value& group)
+{
+    std::vector<int> values;
+
+    if (!group.IsObject()) return values;
+
+    for (auto it = group.MemberBegin(); it != group.MemberEnd(); ++it) {
+        const rapidjson::Value& arr = it->value;
+        if (arr.IsArray()) {
+            for (rapidjson::SizeType i = 0; i < arr.Size(); ++i) {
+                if (arr[i].IsInt()) {
+                    values.push_back(arr[i].GetInt());
+                }
             }
         }
     }
-
-    file.close();
-    return floatChannel;
+    return values;
 }
 
 void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* node, const char* hkxExtraData_path)
@@ -418,78 +339,62 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 	std::vector<std::vector<float>> hkxFloatDataChannels;
 	std::vector<std::string> hkxUserChannelNames;
 	std::string hkxUserChannelName;
+	std::vector<int> hkxExportModes;
+
+	std::string jsonFilePath = extraDataFolder + "/floatchannels/weight_groups.json";
+	std::string jsonFilePathUV = extraDataFolder + "/selectionsets/uv_indices.json";
+    rapidjson::Document floatDoc;
+    rapidjson::Document uvDoc;
+    bool floatJsonIsOpen = loadJsonFile(jsonFilePath, floatDoc);
+    bool uvJsonIsOpen    = loadJsonFile(jsonFilePathUV, uvDoc);
 
 	if (!strncmp(meshName, "collision_", 10) == 0)  // "collision_" is 10 chars long
 	{ 
-		//massage the extra data path
-		if (extraDataFolder.empty()) //if no folder then set to current dir, fbximporter.exe probably in same dir as fbx
-		{
-			extraDataFolder = "."; 
-		} 
-
-		std::vector<std::string> result;
-		std::string searchPath;
-
-		if (extraDataFolder.length() >= std::string("/export_data").length() && extraDataFolder.compare(extraDataFolder.length() - std::string("/export_data").length(), std::string("/export_data").length(), "/export_data") == 0) {
-			searchPath = extraDataFolder;
-		} else {
-			searchPath = extraDataFolder + "/export_data";
-		}
-
-		if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/')
-			searchPath += '\\';
 
 
-		fileNames = getSelectionFilesForMesh(searchPath, meshName);
+		hkxSelectionGroups.clear();
+		hkxFloatDataChannels.clear();
+		hkxUserChannelNames.clear();
+		hkxExportModes.clear();
+
+		n_hkxvertexselectionsets = 0;
+		n_hkxfloatdatachannels = 0;
+
 		// Only add stuff to the hkxselection groups if there were any files
-		if (!fileNames.empty()) 
+		if (uvJsonIsOpen) 
 		{
-			std::string basePath = searchPath + "selectionsets\\";
+			std::vector<std::string> uvGroups = listMeshGroups(uvDoc, meshName);
 
-			for (size_t i = 0; i < fileNames.size(); ++i) {
-				std::vector<int> selectGroup = addUVindex(basePath + fileNames[i]);
-
-				printf("Parsed %d indices from %s\n", (int)selectGroup.size(), fileNames[i].c_str());
-				
-				// <meshname>_groupname.txt = groupname
-				size_t startPos = strlen(meshName)+1;
-
-				size_t endPos = fileNames[i].rfind(".txt");
-				hkxUserChannelName = fileNames[i].substr(startPos, endPos - startPos);
-
-				hkxSelectionGroups.push_back(selectGroup);
-				hkxUserChannelNames.push_back(hkxUserChannelName);
+			for (const auto& g : uvGroups) {
+				int exportMode = -1;
+				std::vector<int> ints;
+				if (uvGetGroupIntData(uvDoc, meshName, g, ints)) {
+					hkxSelectionGroups.push_back(ints);
+					hkxUserChannelNames.push_back(g);
+				}
 			}
+			
 		}
 
 		n_hkxvertexselectionsets = hkxSelectionGroups.size();
 		printf("Done adding %i hkxSelectionGroups\r\n", n_hkxvertexselectionsets);
+		
 
-		fileNames.clear();
-		fileNames = getFloatDataFilesForMesh(searchPath, meshName);
+		if (floatJsonIsOpen){
+			std::vector<std::string> groups = listMeshGroups(floatDoc, meshName);
 
-		if (!fileNames.empty()) 
-		{
-			std::string basePath = searchPath + "floatchannels\\";
-
-			for (size_t i = 0; i < fileNames.size(); ++i) {
-
-				std::vector<float> floatChannelGroup = addFloatChannel(basePath + fileNames[i]);
-
-				printf("Parsed %d indices from %s\n", (int)floatChannelGroup.size()-1, fileNames[i].c_str()); // minus one since first number is the enum for type (float / distance / angle)
-				
-				// <meshname>_groupname.txt = groupname
-				size_t startPos = strlen(meshName)+1;
-
-				size_t endPos = fileNames[i].rfind(".txt");
-				hkxUserChannelName = fileNames[i].substr(startPos, endPos - startPos);
-
-				hkxFloatDataChannels.push_back(floatChannelGroup);
-				hkxUserChannelNames.push_back(hkxUserChannelName);
+			for (const auto& g : groups) {
+				int exportMode = -1;
+				std::vector<float> floats;
+				if (getGroupData(floatDoc, meshName, g, exportMode, floats)) {
+					hkxFloatDataChannels.push_back(floats);
+					hkxExportModes.push_back(exportMode);
+					hkxUserChannelNames.push_back(g);
+				}
 			}
+			n_hkxfloatdatachannels = static_cast<int>(hkxFloatDataChannels.size());
+			printf("Done adding %i hkxFloatDataChannels\r\n", n_hkxfloatdatachannels);
 		}
-		n_hkxfloatdatachannels = hkxFloatDataChannels.size();
-		printf("Done adding %i hkxFloatDataChannels\r\n", n_hkxfloatdatachannels);
 	}
 
 	FbxMesh* originalMesh = meshNode->GetMesh();
@@ -722,7 +627,14 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 						arrFloatDataChannel[i] = new hkxVertexFloatDataChannel();
 
 						// the first entry in floatdatachannel is the enum for data type (FLOAT/DISTANCE/ANGLE)
-						float enumSwitch = hkxFloatDataChannels[i][0];
+
+						if (i >= hkxExportModes.size()) {
+							printf("Error: hkxExportModes index out of range for group %d\n", i);
+							break;
+						}
+
+						int enumSwitch = hkxExportModes[i];
+
 						if (enumSwitch == 0)
 							arrFloatDataChannel[i]->m_dimensions = hkxVertexFloatDataChannel::FLOAT;
 						else if (enumSwitch == 1)
@@ -732,7 +644,6 @@ void FbxToHkxConverter::addMesh(hkxScene *scene, FbxNode* meshNode, hkxNode* nod
 						else
 							printf("Error: invalid value for hkxVertexFloatDataChannel enum datatype: %d, valid values are 0.0, 1.0, 2.0 \r\n", enumSwitch);
 
-						hkxFloatDataChannels[i].erase(hkxFloatDataChannels[i].begin()); // pop first element so indices are aligned without weird adjustments
 
 						for (int hkxFloatDataChannelidx = 0; hkxFloatDataChannelidx < hkxFloatDataChannels[i].size(); hkxFloatDataChannelidx++)
 						{
